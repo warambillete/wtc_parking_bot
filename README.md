@@ -37,18 +37,24 @@ Bot de Telegram para gestión de estacionamientos del edificio WTC.
 
 **Reservar:**
 - "voy el martes"
+- "reservar el lunes"
+- "reservo martes y miércoles"
 - "necesito estacionamiento mañana"
-- "la próxima semana voy el lunes y viernes"
+- "voy toda la semana"
+- "reservo lunes, martes y miércoles"
+- "la próxima semana reservo el viernes"
 
 **Liberar:**
 - "libero el miércoles"
 - "mañana queda libre"
 - "no voy el viernes"
+- "libero el lunes y martes"
+- "libero el martes que es feriado"
 
 **Estado:**
-- "estado"
-- "disponibles"
-- "qué días hay?"
+- "estado" - Ver disponibilidad semanal
+- "disponibles" - Ver espacios libres
+- "mis reservas" - Ver mis reservas
 
 ### Comandos de supervisor:
 
