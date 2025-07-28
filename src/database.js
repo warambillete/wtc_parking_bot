@@ -1,9 +1,16 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');
 
 class Database {
     constructor() {
-        this.dbPath = path.join(__dirname, '..', 'data', 'parking.db');
+        // Crear directorio data si no existe
+        const dataDir = path.join(__dirname, '..', 'data');
+        if (!fs.existsSync(dataDir)) {
+            fs.mkdirSync(dataDir, { recursive: true });
+        }
+        
+        this.dbPath = path.join(dataDir, 'parking.db');
         this.db = new sqlite3.Database(this.dbPath);
         this.init();
     }
