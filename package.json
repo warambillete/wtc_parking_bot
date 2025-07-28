@@ -1,0 +1,29 @@
+{
+  "name": "wtc-parking-bot",
+  "version": "1.0.0",
+  "description": "WTC ParkBot - Sistema de gestión de estacionamientos",
+  "main": "src/bot.js",
+  "scripts": {
+    "start": "node src/bot.js",
+    "dev": "nodemon src/bot.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "moment": "^2.29.4",
+    "moment-timezone": "^0.5.43",
+    "node-telegram-bot-api": "^0.63.0",
+    "sqlite3": "^5.1.6"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "parking",
+    "wtc",
+    "management"
+  ],
+  "author": "",
+  "license": "MIT"
+}
