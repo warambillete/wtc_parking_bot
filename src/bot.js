@@ -16,7 +16,31 @@ class WTCParkBot {
             throw new Error('TELEGRAM_BOT_TOKEN no está configurado');
         }
         
-        this.bot = new TelegramBot(this.token, { polling: true });
+        // Usar webhook en producción, polling en desarrollo
+        const useWebhook = process.env.NODE_ENV === 'production' || process.env.WEBHOOK_URL;
+        
+        if (useWebhook) {
+            this.bot = new TelegramBot(this.token);
+            const webhookUrl = process.env.WEBHOOK_URL || 'https://tu-repl-url.repl.co';
+            this.bot.setWebHook(`${webhookUrl}/bot${this.token}`);
+            
+            // Configurar express para recibir webhooks
+            const express = require('express');
+            const app = express();
+            app.use(express.json());
+            
+            app.post(`/bot${this.token}`, (req, res) => {
+                this.bot.processUpdate(req.body);
+                res.sendStatus(200);
+            });
+            
+            const port = process.env.PORT || 3000;
+            app.listen(port, () => {
+                console.log(`🌐 Webhook servidor corriendo en puerto ${port}`);
+            });
+        } else {
+            this.bot = new TelegramBot(this.token, { polling: true });
+        }
         this.db = new Database();
         this.messageProcessor = new MessageProcessor();
         this.parkingManager = new ParkingManager(this.db);
