@@ -67,7 +67,54 @@ class WTCParkBot {
         
         this.setupHandlers();
         this.setupScheduler();
+        this.setupGracefulShutdown();
         console.log('🚗 WTC ParkBot iniciado correctamente');
+    }
+    
+    setupGracefulShutdown() {
+        // Handle graceful shutdown
+        const shutdown = async (signal) => {
+            console.log(`\n🛑 ${signal} received. Shutting down gracefully...`);
+            
+            try {
+                // Stop polling
+                if (this.bot) {
+                    await this.bot.stopPolling();
+                    console.log('✅ Bot polling stopped');
+                }
+                
+                // Close database
+                if (this.db) {
+                    this.db.close();
+                    console.log('✅ Database closed');
+                }
+                
+                // Clear intervals
+                if (this.weeklyResetInterval) {
+                    clearInterval(this.weeklyResetInterval);
+                }
+                
+                console.log('👋 Shutdown complete');
+                process.exit(0);
+            } catch (error) {
+                console.error('❌ Error during shutdown:', error);
+                process.exit(1);
+            }
+        };
+        
+        // Listen for termination signals
+        process.on('SIGTERM', () => shutdown('SIGTERM'));
+        process.on('SIGINT', () => shutdown('SIGINT'));
+        
+        // Handle uncaught errors
+        process.on('uncaughtException', (error) => {
+            console.error('❌ Uncaught Exception:', error);
+            shutdown('uncaughtException');
+        });
+        
+        process.on('unhandledRejection', (reason, promise) => {
+            console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+        });
     }
     
     setupHandlers() {
@@ -80,7 +127,7 @@ class WTCParkBot {
     
     setupScheduler() {
         // Verificar cada hora si es viernes a las 17:00 GMT-3
-        setInterval(() => {
+        this.weeklyResetInterval = setInterval(() => {
             this.checkWeeklyReset();
         }, 60 * 60 * 1000); // Cada hora
         
