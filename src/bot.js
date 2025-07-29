@@ -16,8 +16,8 @@ class WTCParkBot {
             throw new Error('TELEGRAM_BOT_TOKEN no está configurado');
         }
         
-        // Usar webhook en producción, polling en desarrollo
-        const useWebhook = process.env.NODE_ENV === 'production' && process.env.WEBHOOK_URL;
+        // Usar webhook solo si está explícitamente configurado
+        const useWebhook = process.env.WEBHOOK_URL && process.env.WEBHOOK_URL !== '';
         
         if (useWebhook) {
             this.bot = new TelegramBot(this.token);
@@ -39,6 +39,7 @@ class WTCParkBot {
                 console.log(`🌐 Webhook servidor corriendo en puerto ${port}`);
             });
         } else {
+            console.log('🤖 Bot iniciando en modo POLLING (sin webhook)');
             this.bot = new TelegramBot(this.token, { polling: true });
         }
         this.db = new Database();
