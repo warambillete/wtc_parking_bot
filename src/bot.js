@@ -224,6 +224,7 @@ class WTCParkBot {
                 const parts = data.split('_');
                 const targetUserId = parseInt(parts[2]);
                 const dateStr = parts[3];
+                const spotNumber = parts[4]; // Get spot number from callback data
                 const targetDate = moment(dateStr);
                 
                 if (userId !== targetUserId) {
@@ -233,7 +234,7 @@ class WTCParkBot {
                 
                 if (isAccept) {
                     // Try to assign the spot
-                    const spotAssigned = await this.parkingManager.assignWaitlistSpot(userId, targetDate, 1); // Spot number would need to be passed
+                    const spotAssigned = await this.parkingManager.assignWaitlistSpot(userId, targetDate, spotNumber);
                     
                     if (spotAssigned) {
                         await this.bot.editMessageText(
@@ -268,7 +269,7 @@ class WTCParkBot {
                     await this.bot.answerCallbackQuery(query.id, 'Entendido');
                     
                     // Notify next person in waitlist
-                    await this.notifyWaitlist(chatId, targetDate, 1); // Would need actual spot number
+                    await this.notifyWaitlist(chatId, targetDate, spotNumber);
                 }
             }
             
@@ -333,20 +334,29 @@ class WTCParkBot {
         }
     }
     
-    async notifyWaitlist(chatId, date, spotNumber) {
+    async notifyWaitlist(releaserChatId, date, spotNumber) {
         const waitlistUser = await this.parkingManager.getNextInWaitlist(date);
         
         if (waitlistUser) {
-            this.bot.sendMessage(chatId, 
-                `🎉 @${waitlistUser.username || waitlistUser.first_name}, se liberó el estacionamiento ${spotNumber} para ${date.format('dddd DD/MM')}. ¿Lo quieres?`,
+            // Send notification to the WAITLIST USER, not the releaser
+            this.bot.sendMessage(waitlistUser.user_id, 
+                `🎉 ¡Buenas noticias! Se liberó el estacionamiento ${spotNumber} para ${date.format('dddd DD/MM')}. ¿Lo quieres?`,
                 {
                     reply_markup: {
                         inline_keyboard: [[
-                            { text: 'Sí, lo tomo', callback_data: `take_spot_${waitlistUser.user_id}_${date.format('YYYY-MM-DD')}_${spotNumber}` },
+                            { text: 'Sí, lo tomo', callback_data: `accept_spot_${waitlistUser.user_id}_${date.format('YYYY-MM-DD')}_${spotNumber}` },
                             { text: 'No, gracias', callback_data: `decline_spot_${waitlistUser.user_id}_${date.format('YYYY-MM-DD')}` }
                         ]]
                     }
                 });
+            
+            // Also notify the releaser that someone was notified
+            this.bot.sendMessage(releaserChatId, 
+                `📢 Se notificó a ${waitlistUser.first_name || waitlistUser.username} de la lista de espera.`);
+        } else {
+            // No one in waitlist
+            this.bot.sendMessage(releaserChatId, 
+                `ℹ️ No hay nadie en lista de espera para ${date.format('dddd DD/MM')}.`);
         }
     }
     
