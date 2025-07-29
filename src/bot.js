@@ -140,6 +140,9 @@ class WTCParkBot {
                 } else if (text === '/clearqueues') {
                     await this.handleClearQueues(chatId);
                     return;
+                } else if (text === '/backup') {
+                    await this.handleBackup(chatId);
+                    return;
                 }
             }
             
@@ -431,6 +434,42 @@ class WTCParkBot {
     async handleClearQueues(chatId) {
         this.queueManager.clearAllQueues();
         this.bot.sendMessage(chatId, '🧹 Todas las colas de lotería han sido limpiadas.');
+    }
+    
+    async handleBackup(chatId) {
+        try {
+            // Get all data from database
+            const backupData = {
+                timestamp: new Date().toISOString(),
+                parking_spots: await this.db.getAllParkingSpots(),
+                reservations: await this.db.getAllReservations(),
+                waitlist: await this.db.getAllWaitlist(),
+                database_path: this.db.dbPath
+            };
+            
+            // Convert to JSON
+            const jsonData = JSON.stringify(backupData, null, 2);
+            
+            // Send as document
+            const buffer = Buffer.from(jsonData, 'utf-8');
+            const filename = `parking_backup_${moment().format('YYYY-MM-DD_HHmmss')}.json`;
+            
+            await this.bot.sendDocument(chatId, buffer, {
+                filename: filename,
+                caption: `💾 Backup completo del sistema\n\n` +
+                        `📅 Fecha: ${moment().format('DD/MM/YYYY HH:mm')}\n` +
+                        `🚗 Espacios: ${backupData.parking_spots.length}\n` +
+                        `📝 Reservas: ${backupData.reservations.length}\n` +
+                        `⏳ Lista de espera: ${backupData.waitlist.length}\n` +
+                        `📁 Base de datos: ${backupData.database_path}`
+            });
+            
+            console.log(`✅ Backup enviado a supervisor: ${filename}`);
+            
+        } catch (error) {
+            console.error('Error creando backup:', error);
+            this.bot.sendMessage(chatId, '❌ Error creando el backup: ' + error.message);
+        }
     }
     
     async handleHelp(chatId, userId) {

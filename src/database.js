@@ -4,13 +4,23 @@ const fs = require('fs');
 
 class Database {
     constructor() {
-        // Crear directorio data si no existe
-        const dataDir = path.join(__dirname, '..', 'data');
-        if (!fs.existsSync(dataDir)) {
-            fs.mkdirSync(dataDir, { recursive: true });
+        // Use Render's persistent disk at /data if available, otherwise local data directory
+        const isPersistentDiskAvailable = fs.existsSync('/data');
+        
+        if (isPersistentDiskAvailable) {
+            // Production: Use Render's persistent disk
+            this.dbPath = '/data/parking.db';
+            console.log('📁 Using Render persistent disk at /data/parking.db');
+        } else {
+            // Development: Use local data directory
+            const dataDir = path.join(__dirname, '..', 'data');
+            if (!fs.existsSync(dataDir)) {
+                fs.mkdirSync(dataDir, { recursive: true });
+            }
+            this.dbPath = path.join(dataDir, 'parking.db');
+            console.log('📁 Using local database at', this.dbPath);
         }
         
-        this.dbPath = path.join(dataDir, 'parking.db');
         this.db = new sqlite3.Database(this.dbPath);
         this.init();
     }
@@ -347,6 +357,34 @@ class Database {
                         });
                     });
                 });
+            });
+        });
+    }
+    
+    // Backup methods
+    getAllParkingSpots() {
+        return new Promise((resolve, reject) => {
+            this.db.all('SELECT * FROM parking_spots WHERE active = 1', [], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+    }
+    
+    getAllReservations() {
+        return new Promise((resolve, reject) => {
+            this.db.all('SELECT * FROM reservations ORDER BY date, spot_number', [], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+    }
+    
+    getAllWaitlist() {
+        return new Promise((resolve, reject) => {
+            this.db.all('SELECT * FROM waitlist ORDER BY date, position', [], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
             });
         });
     }
