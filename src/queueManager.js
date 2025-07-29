@@ -21,8 +21,8 @@ class QueueManager {
     // Check if reservation is for next week (the lottery target)
     isNextWeekReservation(targetDate) {
         const now = moment().tz('America/Argentina/Buenos_Aires');
-        const nextWeekStart = now.clone().add(1, 'week').startOf('week').add(1, 'day'); // Next Monday
-        const nextWeekEnd = now.clone().add(1, 'week').endOf('week').subtract(1, 'day'); // Next Friday
+        const nextWeekStart = now.clone().add(1, 'week').day(1); // Next Monday
+        const nextWeekEnd = now.clone().add(1, 'week').day(5); // Next Friday
         
         return targetDate.isBetween(nextWeekStart, nextWeekEnd, 'day', '[]');
     }

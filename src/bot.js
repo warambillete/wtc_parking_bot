@@ -473,10 +473,10 @@ class WTCParkBot {
         } else if (now.day() === 6) { // Si es sábado, la "semana actual" es la que empieza en 2 días
             startOfCurrentWeek = now.clone().add(2, 'day'); // Lunes
         } else {
-            startOfCurrentWeek = now.clone().startOf('week').add(1, 'day'); // Lunes de esta semana
+            startOfCurrentWeek = now.clone().day(1); // Lunes de esta semana
         }
         
-        const endOfCurrentWeek = startOfCurrentWeek.clone().add(4, 'days'); // Viernes
+        const endOfCurrentWeek = startOfCurrentWeek.clone().day(5); // Viernes
         const startOfNextWeek = startOfCurrentWeek.clone().add(1, 'week');
         const endOfNextWeek = endOfCurrentWeek.clone().add(1, 'week');
         

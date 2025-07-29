@@ -82,17 +82,20 @@ class ParkingManager {
     async getWeekStatus() {
         const now = moment().tz('America/Argentina/Buenos_Aires');
         
-        // Calcular semana laboral actual (como en isValidReservationTime)
+        // Calcular semana laboral actual (lunes a viernes)
         let startOfWeek;
+        
         if (now.day() === 0) { // Si es domingo, mostrar la semana que empieza mañana
             startOfWeek = now.clone().add(1, 'day'); // Lunes
         } else if (now.day() === 6) { // Si es sábado, mostrar la semana que empieza en 2 días
             startOfWeek = now.clone().add(2, 'day'); // Lunes
         } else {
-            startOfWeek = now.clone().startOf('week').add(1, 'day'); // Lunes de esta semana
+            // Para días laborables, ir al lunes de esta semana
+            startOfWeek = now.clone().day(1); // Día 1 = lunes
         }
         
-        const endOfWeek = startOfWeek.clone().add(4, 'days'); // Viernes
+        // Siempre mostrar exactamente 5 días: lunes a viernes
+        const endOfWeek = startOfWeek.clone().day(5); // Día 5 = viernes
         
         const weekStatus = {};
         const current = startOfWeek.clone();
