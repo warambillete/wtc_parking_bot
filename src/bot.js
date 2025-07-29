@@ -3,6 +3,7 @@ const moment = require('moment-timezone');
 const Database = require('./database');
 const MessageProcessor = require('./messageProcessor');
 const ParkingManager = require('./parkingManager');
+const QueueManager = require('./queueManager');
 
 moment.locale('es');
 moment.tz.setDefault('America/Mexico_City');
@@ -62,6 +63,7 @@ class WTCParkBot {
         this.db = new Database();
         this.messageProcessor = new MessageProcessor();
         this.parkingManager = new ParkingManager(this.db);
+        this.queueManager = new QueueManager(this.db, this.bot);
         
         this.setupHandlers();
         this.setupScheduler();
@@ -131,6 +133,12 @@ class WTCParkBot {
                 } else if (text === '/debug') {
                     await this.handleDebug(chatId);
                     return;
+                } else if (text === '/queues') {
+                    await this.handleQueuesStatus(chatId);
+                    return;
+                } else if (text === '/clearqueues') {
+                    await this.handleClearQueues(chatId);
+                    return;
                 }
             }
             
@@ -170,6 +178,15 @@ class WTCParkBot {
             return;
         }
         
+        // Check if should use queue system (Friday 17:00-17:15 for next week reservations)
+        if (this.queueManager.isInQueuePeriod() && this.queueManager.isNextWeekReservation(targetDate)) {
+            console.log(`🎲 Usando sistema de cola para ${user.first_name || user.username}`);
+            const queueResult = await this.queueManager.addToQueue(userId, user, targetDate, chatId);
+            this.bot.sendMessage(chatId, queueResult.message);
+            return;
+        }
+
+        // Normal reservation processing
         const result = await this.parkingManager.reserveSpot(userId, user, targetDate);
         
         if (result.success) {
@@ -272,6 +289,42 @@ class WTCParkBot {
         this.bot.sendMessage(chatId, message);
     }
     
+    async handleQueuesStatus(chatId) {
+        const queues = this.queueManager.getAllQueues();
+        const now = moment().tz('America/Argentina/Buenos_Aires');
+        
+        let message = `🎲 **Estado de Colas de Lotería:**\n\n`;
+        message += `**Fecha/Hora actual:** ${now.format('dddd DD/MM HH:mm')}\n`;
+        message += `**Período de cola activo:** ${this.queueManager.isInQueuePeriod() ? '✅ SÍ' : '❌ NO'}\n\n`;
+        
+        if (Object.keys(queues).length === 0) {
+            message += `📭 No hay colas activas.\n\n`;
+        } else {
+            message += `**Colas activas:**\n`;
+            for (const [dateStr, queueInfo] of Object.entries(queues)) {
+                const date = moment(dateStr).format('dddd DD/MM');
+                message += `\n**${date}:**\n`;
+                message += `👥 Usuarios en cola: ${queueInfo.total}\n`;
+                message += `📋 Usuarios:\n`;
+                queueInfo.users.forEach((user, index) => {
+                    const timestamp = moment(user.timestamp).format('HH:mm:ss');
+                    message += `   ${index + 1}. ${user.name} (${timestamp})\n`;
+                });
+            }
+        }
+        
+        message += `\n**Comandos:**\n`;
+        message += `• /clearqueues - Limpiar todas las colas\n`;
+        message += `• /queues - Ver este estado`;
+        
+        this.bot.sendMessage(chatId, message);
+    }
+    
+    async handleClearQueues(chatId) {
+        this.queueManager.clearAllQueues();
+        this.bot.sendMessage(chatId, '🧹 Todas las colas de lotería han sido limpiadas.');
+    }
+    
     async handleHelp(chatId, userId) {
         const message = `🚗 **WTC ParkBot - Ayuda**
 
@@ -301,6 +354,12 @@ class WTCParkBot {
 • Próxima semana: solo viernes después de 17:00
 • Solo días laborables (lunes a viernes)
 • Reset automático: viernes 17:00 GMT-3
+
+**🎲 Sistema de Lotería (Viernes 17:00-17:15):**
+• Durante estos 15 minutos, las reservas para la próxima semana entran en una cola
+• A las 17:15 se asignan los espacios de forma aleatoria
+• ¡Todos tienen la misma oportunidad independientemente de la hora exacta!
+• Elimina ventajas por mensajes programados o velocidad de conexión
 
 💡 **Tip:** Escribe de forma natural, el bot entiende tu intención.`;
 
