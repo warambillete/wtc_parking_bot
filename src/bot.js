@@ -41,6 +41,23 @@ class WTCParkBot {
         } else {
             console.log('🤖 Bot iniciando en modo POLLING (sin webhook)');
             this.bot = new TelegramBot(this.token, { polling: true });
+            
+            // Crear servidor HTTP para health checks de Render
+            const express = require('express');
+            const app = express();
+            
+            app.get('/', (req, res) => {
+                res.send('WTC Parking Bot is running!');
+            });
+            
+            app.get('/health', (req, res) => {
+                res.json({ status: 'ok', timestamp: new Date().toISOString() });
+            });
+            
+            const port = process.env.PORT || 3000;
+            app.listen(port, () => {
+                console.log(`🌐 Health check server running on port ${port}`);
+            });
         }
         this.db = new Database();
         this.messageProcessor = new MessageProcessor();
