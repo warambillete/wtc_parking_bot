@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: wtc-parking-bot
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: SUPERVISOR_USER_ID
+        sync: false
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
