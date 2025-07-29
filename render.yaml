@@ -6,7 +6,7 @@ services:
     startCommand: npm start
     envVars:
       - key: NODE_ENV
-        value: production
+        value: development
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: SUPERVISOR_USER_ID

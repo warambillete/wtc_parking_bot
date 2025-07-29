@@ -20,6 +20,8 @@ Add these in Render Dashboard → Environment:
 - `TELEGRAM_BOT_TOKEN` - Your bot token from @BotFather
 - `SUPERVISOR_USER_ID` - Your Telegram user ID
 
+**Important**: Do NOT set `WEBHOOK_URL` - the bot will use polling mode which is more reliable for Render.
+
 ## Persistent Storage
 
 The bot uses SQLite database. With the render.yaml config, it will:

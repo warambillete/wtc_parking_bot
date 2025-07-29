@@ -17,11 +17,11 @@ class WTCParkBot {
         }
         
         // Usar webhook en producción, polling en desarrollo
-        const useWebhook = process.env.NODE_ENV === 'production' || process.env.WEBHOOK_URL;
+        const useWebhook = process.env.NODE_ENV === 'production' && process.env.WEBHOOK_URL;
         
         if (useWebhook) {
             this.bot = new TelegramBot(this.token);
-            const webhookUrl = process.env.WEBHOOK_URL || 'https://tu-repl-url.repl.co';
+            const webhookUrl = process.env.WEBHOOK_URL;
             this.bot.setWebHook(`${webhookUrl}/bot${this.token}`);
             
             // Configurar express para recibir webhooks
