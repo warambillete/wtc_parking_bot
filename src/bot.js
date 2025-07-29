@@ -72,6 +72,7 @@ class WTCParkBot {
     
     setupHandlers() {
         this.bot.on('message', (msg) => this.handleMessage(msg));
+        this.bot.on('callback_query', (query) => this.handleCallbackQuery(query));
         this.bot.on('polling_error', (error) => {
             console.error('Error de polling:', error);
         });
@@ -164,6 +165,113 @@ class WTCParkBot {
         } catch (error) {
             console.error('Error procesando mensaje:', error);
             this.bot.sendMessage(chatId, '❌ Ocurrió un error procesando tu mensaje');
+        }
+    }
+    
+    async handleCallbackQuery(query) {
+        const chatId = query.message.chat.id;
+        const userId = query.from.id;
+        const data = query.data;
+        
+        console.log(`Callback query de ${query.from.first_name}: ${data}`);
+        
+        try {
+            if (data.startsWith('waitlist_yes_')) {
+                // Format: waitlist_yes_userId_YYYY-MM-DD
+                const parts = data.split('_');
+                const targetUserId = parseInt(parts[2]);
+                const dateStr = parts[3];
+                const targetDate = moment(dateStr);
+                
+                // Verify it's the same user
+                if (userId !== targetUserId) {
+                    await this.bot.answerCallbackQuery(query.id, 'Esta opción no es para ti');
+                    return;
+                }
+                
+                // Add to waitlist
+                await this.parkingManager.addToWaitlist(userId, query.from, targetDate);
+                
+                // Update the message
+                await this.bot.editMessageText(
+                    `📝 Has sido añadido a la lista de espera para ${targetDate.format('dddd DD/MM')}.\n\nTe notificaremos si se libera un espacio.`,
+                    {
+                        chat_id: chatId,
+                        message_id: query.message.message_id
+                    }
+                );
+                
+                await this.bot.answerCallbackQuery(query.id, '✅ Añadido a lista de espera');
+                
+            } else if (data === 'waitlist_no') {
+                // User declined waitlist
+                await this.bot.editMessageText(
+                    'De acuerdo, no fuiste añadido a la lista de espera.',
+                    {
+                        chat_id: chatId,
+                        message_id: query.message.message_id
+                    }
+                );
+                
+                await this.bot.answerCallbackQuery(query.id, 'Entendido');
+                
+            } else if (data.startsWith('accept_spot_') || data.startsWith('decline_spot_')) {
+                // Handle waitlist notifications (when someone releases a spot)
+                const isAccept = data.startsWith('accept_spot_');
+                const parts = data.split('_');
+                const targetUserId = parseInt(parts[2]);
+                const dateStr = parts[3];
+                const targetDate = moment(dateStr);
+                
+                if (userId !== targetUserId) {
+                    await this.bot.answerCallbackQuery(query.id, 'Esta opción no es para ti');
+                    return;
+                }
+                
+                if (isAccept) {
+                    // Try to assign the spot
+                    const spotAssigned = await this.parkingManager.assignWaitlistSpot(userId, targetDate, 1); // Spot number would need to be passed
+                    
+                    if (spotAssigned) {
+                        await this.bot.editMessageText(
+                            `🎉 ¡Perfecto! Te hemos asignado un estacionamiento para ${targetDate.format('dddd DD/MM')}.`,
+                            {
+                                chat_id: chatId,
+                                message_id: query.message.message_id
+                            }
+                        );
+                        await this.bot.answerCallbackQuery(query.id, '✅ Espacio asignado');
+                    } else {
+                        await this.bot.editMessageText(
+                            `❌ Lo siento, el espacio ya fue asignado a otra persona.`,
+                            {
+                                chat_id: chatId,
+                                message_id: query.message.message_id
+                            }
+                        );
+                        await this.bot.answerCallbackQuery(query.id, 'Espacio no disponible');
+                    }
+                } else {
+                    // User declined the spot
+                    await this.parkingManager.removeFromWaitlist(userId, targetDate);
+                    
+                    await this.bot.editMessageText(
+                        `De acuerdo, el espacio para ${targetDate.format('dddd DD/MM')} se ofrecerá al siguiente en la lista.`,
+                        {
+                            chat_id: chatId,
+                            message_id: query.message.message_id
+                        }
+                    );
+                    await this.bot.answerCallbackQuery(query.id, 'Entendido');
+                    
+                    // Notify next person in waitlist
+                    await this.notifyWaitlist(chatId, targetDate, 1); // Would need actual spot number
+                }
+            }
+            
+        } catch (error) {
+            console.error('Error procesando callback query:', error);
+            await this.bot.answerCallbackQuery(query.id, 'Error procesando solicitud');
         }
     }
     
