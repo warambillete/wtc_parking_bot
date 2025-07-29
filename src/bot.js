@@ -4,6 +4,7 @@ const Database = require('./database');
 const MessageProcessor = require('./messageProcessor');
 const ParkingManager = require('./parkingManager');
 const QueueManager = require('./queueManager');
+const SingleInstanceLock = require('./singleInstance');
 
 moment.locale('es');
 moment.tz.setDefault('America/Mexico_City');
@@ -12,9 +13,24 @@ class WTCParkBot {
     constructor() {
         this.token = process.env.TELEGRAM_BOT_TOKEN;
         this.supervisorId = process.env.SUPERVISOR_USER_ID;
+        this.instanceLock = new SingleInstanceLock();
         
         if (!this.token) {
             throw new Error('TELEGRAM_BOT_TOKEN no está configurado');
+        }
+        
+        // Initialize bot with single instance check
+        this.initializeBot();
+    }
+    
+    async initializeBot() {
+        // Try to acquire lock
+        const lockAcquired = await this.instanceLock.acquireLock();
+        
+        if (!lockAcquired) {
+            console.error('❌ Cannot start: Another instance is already running');
+            console.error('If this is an error, delete /tmp/wtcparking-bot.lock and restart');
+            process.exit(1);
         }
         
         // Usar webhook solo si está explícitamente configurado
@@ -92,6 +108,11 @@ class WTCParkBot {
                 // Clear intervals
                 if (this.weeklyResetInterval) {
                     clearInterval(this.weeklyResetInterval);
+                }
+                
+                // Release instance lock
+                if (this.instanceLock) {
+                    this.instanceLock.releaseLock();
                 }
                 
                 console.log('👋 Shutdown complete');
