@@ -173,9 +173,11 @@ class ParkingManager {
             responseText += `*${dayName}*\n`;
             
             if (reservedSpots.length > 0) {
-                responseText += `🚗 Ocupados: `;
-                const reservedNumbers = reservedSpots.map(spot => spot.spot_number).join(', ');
-                responseText += `${reservedNumbers}\n`;
+                responseText += `🚗 Ocupados:\n`;
+                reservedSpots.forEach(spot => {
+                    const name = spot.first_name || spot.username || 'Usuario';
+                    responseText += `   • Espacio ${spot.spot_number}: ${name}\n`;
+                });
             }
             
             if (availableSpots.length > 0) {

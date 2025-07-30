@@ -103,7 +103,7 @@ class WTCParkBot {
         this.db = new Database();
         this.messageProcessor = new MessageProcessor();
         this.parkingManager = new ParkingManager(this.db);
-        this.queueManager = new QueueManager(this.db, this.bot);
+        this.queueManager = new QueueManager(this.db, this.bot, this.parkingManager);
         
         this.setupHandlers();
         this.setupScheduler();

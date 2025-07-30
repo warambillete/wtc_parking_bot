@@ -32,7 +32,7 @@ class WTCParkBotWebhook {
         
         this.messageProcessor = new MessageProcessor();
         this.parkingManager = new ParkingManager(this.db);
-        this.queueManager = new QueueManager(this.db, this.bot);
+        this.queueManager = new QueueManager(this.db, this.bot, this.parkingManager);
         
         // Set up Express server for webhooks
         this.app = express();

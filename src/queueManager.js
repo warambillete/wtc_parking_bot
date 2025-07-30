@@ -1,9 +1,10 @@
 const moment = require('moment-timezone');
 
 class QueueManager {
-    constructor(database, bot) {
+    constructor(database, bot, parkingManager = null) {
         this.db = database;
         this.bot = bot;
+        this.parkingManager = parkingManager;
         this.queues = new Map(); // date -> array of requests
         this.processingTimeouts = new Map(); // date -> timeout reference
         this.isQueueActive = false;
@@ -245,10 +246,13 @@ class QueueManager {
             return await this.addToQueue(userId, user, targetDate, userId); // Use userId as chatId fallback
         } else {
             // Regular immediate reservation using ParkingManager
-            const ParkingManager = require('./parkingManager');
-            const parkingManager = new ParkingManager(this.db);
+            if (!this.parkingManager) {
+                // Fallback: create ParkingManager if not provided (should not happen in production)
+                const ParkingManager = require('./parkingManager');
+                this.parkingManager = new ParkingManager(this.db);
+            }
             
-            const result = await parkingManager.reserveSpot(userId, user, targetDate);
+            const result = await this.parkingManager.reserveSpot(userId, user, targetDate);
             
             if (result.success) {
                 return {
