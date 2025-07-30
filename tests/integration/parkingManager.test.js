@@ -208,16 +208,16 @@ describe('ParkingManager Integration Tests', () => {
             expect(stats.totalReservations).toBe(0);
         });
 
-        test('should clear all when setting new parking spots', async () => {
+        test('should preserve reservations when setting new parking spots', async () => {
             // Add reservation
             await parkingManager.reserveSpot(111, { username: 'user1' }, moment().add(1, 'day'));
 
-            // Set new spots (should clear all)
+            // Set new spots (should NOT clear reservations anymore)
             await parkingManager.setParkingSpots(['A', 'B']);
 
             const stats = await parkingManager.getSystemStats();
             expect(stats.totalSpots).toBe(2);
-            expect(stats.totalReservations).toBe(0);
+            expect(stats.totalReservations).toBe(1); // Reservation should still exist
         });
     });
 });

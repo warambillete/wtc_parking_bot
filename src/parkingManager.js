@@ -110,9 +110,7 @@ class ParkingManager {
     }
     
     async setParkingSpots(spotNumbers) {
-        // Primero limpiar todas las reservas
-        await this.clearAllReservations();
-        // Luego actualizar los espacios
+        // Solo actualizar los espacios, sin limpiar reservas existentes
         await this.db.setParkingSpots(spotNumbers);
     }
     
