@@ -82,17 +82,8 @@ class Database {
             // Migrate fixed_spots table if needed
             this.migrateFixedSpotsTable();
             
-            // Tabla de liberaciones temporales de espacios fijos
-            this.db.run(`
-                CREATE TABLE IF NOT EXISTS fixed_spot_releases (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    spot_number TEXT NOT NULL,
-                    start_date TEXT NOT NULL,
-                    end_date TEXT NOT NULL,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (spot_number) REFERENCES fixed_spots(spot_number)
-                )
-            `);
+            // Migrate fixed_spot_releases table if needed
+            this.migrateFixedSpotReleasesTable();
             
             // Índices para mejor rendimiento
             this.db.run(`CREATE INDEX IF NOT EXISTS idx_reservations_date ON reservations(date)`);
@@ -165,6 +156,74 @@ class Database {
                 } else {
                     // Table already has correct structure
                     console.log('✅ Fixed spots table already has correct structure');
+                }
+            });
+        });
+    }
+    
+    migrateFixedSpotReleasesTable() {
+        // Check if fixed_spot_releases table exists and has old structure
+        this.db.get("PRAGMA table_info(fixed_spot_releases)", (err, result) => {
+            if (err) {
+                console.log('🔄 Creating new fixed_spot_releases table...');
+                // Table doesn't exist, create new one
+                this.db.run(`
+                    CREATE TABLE IF NOT EXISTS fixed_spot_releases (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        spot_number TEXT NOT NULL,
+                        start_date TEXT NOT NULL,
+                        end_date TEXT NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (spot_number) REFERENCES fixed_spots(spot_number)
+                    )
+                `);
+                return;
+            }
+            
+            // Check if table has old structure (owner_user_id column)
+            this.db.all("PRAGMA table_info(fixed_spot_releases)", (err, columns) => {
+                if (err) return;
+                
+                const hasOwnerColumn = columns.some(col => col.name === 'owner_user_id');
+                
+                if (hasOwnerColumn) {
+                    console.log('🔄 Migrating fixed_spot_releases table to new structure...');
+                    
+                    // Backup existing data (excluding owner_user_id)
+                    this.db.all("SELECT spot_number, start_date, end_date FROM fixed_spot_releases", (err, existingData) => {
+                        if (err) {
+                            console.error('Error reading existing fixed spot releases:', err);
+                            return;
+                        }
+                        
+                        // Drop old table and create new one
+                        this.db.serialize(() => {
+                            this.db.run("DROP TABLE IF EXISTS fixed_spot_releases");
+                            this.db.run(`
+                                CREATE TABLE fixed_spot_releases (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                    spot_number TEXT NOT NULL,
+                                    start_date TEXT NOT NULL,
+                                    end_date TEXT NOT NULL,
+                                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                    FOREIGN KEY (spot_number) REFERENCES fixed_spots(spot_number)
+                                )
+                            `);
+                            
+                            // Restore data (without owner_user_id)
+                            if (existingData && existingData.length > 0) {
+                                const stmt = this.db.prepare('INSERT INTO fixed_spot_releases (spot_number, start_date, end_date) VALUES (?, ?, ?)');
+                                existingData.forEach(row => {
+                                    stmt.run(row.spot_number, row.start_date, row.end_date);
+                                });
+                                stmt.finalize();
+                                console.log(`✅ Migrated ${existingData.length} fixed spot releases to new structure`);
+                            }
+                        });
+                    });
+                } else {
+                    // Table already has correct structure
+                    console.log('✅ Fixed spot releases table already has correct structure');
                 }
             });
         });
