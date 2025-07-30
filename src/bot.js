@@ -100,6 +100,9 @@ class WTCParkBotWebhook {
         
         // Handle graceful shutdown
         this.setupGracefulShutdown();
+        
+        // Setup automatic cleanup scheduler
+        this.setupAutomaticCleanup();
     }
     
     setupHandlers() {
@@ -134,8 +137,9 @@ class WTCParkBotWebhook {
         console.log(`💬 Message from ${msg.from?.first_name} (${userId}): ${msg.text}`);
         
         try {
-            // Handle supervisor commands
-            if (userId.toString() === this.supervisorId && text.startsWith('/')) {
+            
+            // Handle supervisor commands (use original text for commands)
+            if (userId.toString() === this.supervisorId && msg.text.trim().startsWith('/')) {
                 await this.handleSupervisorCommand(msg);
                 return;
             }
@@ -173,6 +177,18 @@ class WTCParkBotWebhook {
                     await this.handleHelp(msg);
                     break;
                     
+                case 'FIXED_LIST':
+                    await this.handleFixedList(msg);
+                    break;
+                    
+                case 'FIXED_RELEASE':
+                    await this.handleFixedRelease(msg, intent);
+                    break;
+                    
+                case 'FIXED_REMOVAL':
+                    await this.handleFixedRemoval(msg, intent);
+                    break;
+                    
                 default:
                     await this.handleUnknownCommand(msg);
             }
@@ -201,9 +217,70 @@ class WTCParkBotWebhook {
                 `• En lista de espera: ${stats.totalWaitlist}`
             );
         }
+        else if (text === '/version') {
+            const packageInfo = require('../package.json');
+            const now = moment().tz('America/Montevideo');
+            const uptime = process.uptime();
+            const hours = Math.floor(uptime / 3600);
+            const minutes = Math.floor((uptime % 3600) / 60);
+            
+            await this.bot.sendMessage(chatId, 
+                `🔧 *WTC Parking Bot*\n\n` +
+                `📌 Versión: ${packageInfo.version}\n` +
+                `🚀 Modo: Webhook\n` +
+                `⏰ Hora actual: ${now.format('DD/MM/YYYY HH:mm:ss')}\n` +
+                `⏱️ Uptime: ${hours}h ${minutes}m\n` +
+                `🌐 Node: ${process.version}\n` +
+                `💾 DB: ${this.db.dbPath}\n` +
+                `🏷️ Ambiente: ${process.env.NODE_ENV || 'production'}`,
+                { parse_mode: 'Markdown' }
+            );
+        }
         else if (text === '/clear') {
             await this.parkingManager.clearAllReservations();
             await this.bot.sendMessage(chatId, '🗑️ Todas las reservas han sido eliminadas');
+        }
+        else if (text.startsWith('/setfixed')) {
+            // Format: /setfixed 222,4122,4424
+            const fixedStr = text.replace('/setfixed', '').trim();
+            if (!fixedStr) {
+                await this.bot.sendMessage(chatId, 
+                    '❌ Formato: /setfixed 222,4122,4424');
+                return;
+            }
+            
+            const spotNumbers = fixedStr.split(',').map(n => n.trim()).filter(n => n.length > 0);
+            
+            if (spotNumbers.length > 0) {
+                await this.db.setFixedSpotNumbers(spotNumbers);
+                await this.bot.sendMessage(chatId, 
+                    `✅ Espacios fijos configurados:\n${spotNumbers.map(s => `• ${s}`).join('\n')}`);
+            } else {
+                await this.bot.sendMessage(chatId, '❌ No se pudo procesar ningún espacio fijo');
+            }
+        }
+        else if (text === '/helpsuper') {
+            const helpText = `🔧 *Comandos de Administrador:*
+
+📋 *Configuración:*
+• \`/setparking 1,2,3\` - Configurar espacios flex
+• \`/setfixed 222,4122,4424\` - Configurar espacios fijos
+
+📊 *Información:*
+• \`/stats\` - Ver estadísticas del sistema
+• \`/version\` - Ver versión y estado del bot
+
+🗑️ *Gestión:*
+• \`/clear\` - Limpiar todas las reservas
+
+ℹ️ *Formato espacios fijos:*
+\`/setfixed NUMERO1,NUMERO2,NUMERO3\`
+Ejemplo: \`/setfixed 222,4122,4424\`
+
+💡 *Uso:*
+Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
+            `;
+            await this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
         }
     }
     
@@ -395,39 +472,116 @@ class WTCParkBotWebhook {
     }
     
     async handleHelp(msg) {
-        const helpText = `
-🚗 *WTC Parking Bot - Ayuda*
-
-*Comandos disponibles:*
+        const helpText = `🚗 *WTC Parking Bot*
 
 📅 *Reservar:*
-• "voy el lunes" - Reservar un día
-• "reservo lunes y miércoles" - Múltiples días
+• "voy el lunes" - Un día
+• "voy lunes y miércoles" - Múltiples días
 • "voy toda la semana" - Lunes a viernes
 
 🔓 *Liberar:*
-• "libero el martes" - Liberar un día
-• "no voy el jueves" - Liberar un día
+• "libero el martes" / "no voy el jueves"
+
+🔐 *Espacios Fijos:*
+• "libero el 8033 para martes"
+• "libero el 8033 toda la semana"
+• "libero el 8033 por 2 semanas"
+• "quitar el 8033" - Remover del pool
 
 📊 *Consultar:*
-• "estado" - Ver disponibilidad semanal
+• "estado" - Ver disponibilidad
 • "mis reservas" - Ver tus reservas
+• "ver fijos" - Ver espacios fijos
 
-⏰ *Fechas:*
-• "mañana", "hoy"
-• Días: lunes, martes, miércoles, jueves, viernes
-• "la próxima semana voy el..."
-
-🎯 *Lista de espera:*
-Si no hay espacios, te ofreceremos lista de espera automáticamente.
+⏰ Días: lunes-viernes, "mañana", "hoy"
+🎯 Lista de espera automática si no hay espacios
         `;
         
         await this.bot.sendMessage(msg.chat.id, helpText, { parse_mode: 'Markdown' });
     }
     
+    async handleFixedList(msg) {
+        try {
+            const fixedSpots = await this.db.getFixedSpots();
+            
+            if (fixedSpots.length === 0) {
+                await this.bot.sendMessage(msg.chat.id, '📋 No hay espacios fijos configurados.');
+                return;
+            }
+            
+            const spotNumbers = fixedSpots.map(spot => spot.spot_number).join(', ');
+            await this.bot.sendMessage(msg.chat.id, 
+                `🔐 *Espacios Fijos:*\n\n${spotNumbers}\n\n💡 Puedes liberar cualquiera de estos diciendo "libero el XXXX para martes"`, 
+                { parse_mode: 'Markdown' }
+            );
+            
+        } catch (error) {
+            console.error('Error getting fixed spots list:', error);
+            await this.bot.sendMessage(msg.chat.id, '❌ Error al obtener la lista de espacios fijos.');
+        }
+    }
+    
     async handleUnknownCommand(msg) {
         await this.bot.sendMessage(msg.chat.id, 
             '🤔 No entiendo ese comando. Escribe "ayuda" para ver los comandos disponibles.');
+    }
+    
+    async handleFixedRelease(msg, intent) {
+        const chatId = msg.chat.id;
+        
+        try {
+            // Check if the spot number is in the fixed spots list
+            const isFixed = await this.db.isFixedSpot(intent.spotNumber);
+            
+            if (!isFixed) {
+                await this.bot.sendMessage(chatId, 
+                    `❌ El espacio ${intent.spotNumber} no es un espacio fijo.`);
+                return;
+            }
+            
+            // Release the spot for the specified period
+            const startDateStr = intent.startDate.format('YYYY-MM-DD');
+            const endDateStr = intent.endDate.format('YYYY-MM-DD');
+            
+            await this.db.releaseFixedSpot(intent.spotNumber, startDateStr, endDateStr);
+            
+            await this.bot.sendMessage(chatId, 
+                `✅ Espacio ${intent.spotNumber} liberado desde ${intent.startDate.format('dddd DD/MM')} hasta ${intent.endDate.format('dddd DD/MM')}`);
+            
+        } catch (error) {
+            console.error('Error releasing fixed spot:', error);
+            await this.bot.sendMessage(chatId, '❌ Error al liberar el espacio fijo.');
+        }
+    }
+    
+    async handleFixedRemoval(msg, intent) {
+        const chatId = msg.chat.id;
+        
+        try {
+            // Check if the spot number is in the fixed spots list
+            const isFixed = await this.db.isFixedSpot(intent.spotNumber);
+            
+            if (!isFixed) {
+                await this.bot.sendMessage(chatId, 
+                    `❌ El espacio ${intent.spotNumber} no es un espacio fijo.`);
+                return;
+            }
+            
+            // Remove the spot from the pool
+            const removed = await this.db.removeFixedSpotRelease(intent.spotNumber);
+            
+            if (removed > 0) {
+                await this.bot.sendMessage(chatId, 
+                    `✅ Espacio ${intent.spotNumber} removido del pool de reservas.`);
+            } else {
+                await this.bot.sendMessage(chatId, 
+                    `⚠️ El espacio ${intent.spotNumber} no estaba liberado.`);
+            }
+            
+        } catch (error) {
+            console.error('Error removing fixed spot from pool:', error);
+            await this.bot.sendMessage(chatId, '❌ Error al remover el espacio fijo del pool.');
+        }
     }
     
     async handleCallbackQuery(query) {
@@ -457,11 +611,63 @@ Si no hay espacios, te ofreceremos lista de espera automáticamente.
         await this.bot.answerCallbackQuery(query.id);
     }
     
+    setupAutomaticCleanup() {
+        const scheduleNextFridayReset = () => {
+            const now = moment().tz('America/Montevideo');
+            
+            // Calculate next Friday at 17:00
+            let nextFriday = now.clone();
+            
+            // If today is Friday and we haven't passed 17:00 yet
+            if (now.day() === 5 && now.hour() < 17) {
+                nextFriday = now.clone().hour(17).minute(0).second(0);
+            } else {
+                // Go to next Friday
+                nextFriday = now.clone().day(5 + 7).hour(17).minute(0).second(0); // Next Friday
+            }
+            
+            const timeUntilReset = nextFriday.diff(now);
+            
+            console.log(`🔄 Next Friday 5PM reset scheduled for: ${nextFriday.format('dddd DD/MM/YYYY HH:mm')}`);
+            
+            this.fridayResetTimeout = setTimeout(async () => {
+                try {
+                    console.log('🔄 Running Friday 5PM reset...');
+                    const result = await this.db.resetCurrentWeekReservations();
+                    
+                    // Send notification to supervisor if configured
+                    if (this.supervisorId) {
+                        try {
+                            await this.bot.sendMessage(this.supervisorId, 
+                                `🔄 Reset automático de viernes 17:00 completado: ${result.reservationsCleared} reservas y ${result.waitlistCleared} listas de espera eliminadas.`);
+                        } catch (error) {
+                            console.error('Error sending Friday reset notification to supervisor:', error);
+                        }
+                    }
+                } catch (error) {
+                    console.error('❌ Error during Friday reset:', error);
+                }
+                
+                // Schedule next Friday reset
+                scheduleNextFridayReset();
+            }, timeUntilReset);
+        };
+        
+        // Only start Friday reset scheduler - no daily cleanup
+        scheduleNextFridayReset();
+    }
+    
     setupGracefulShutdown() {
         const shutdown = async (signal) => {
             console.log(`🛑 ${signal} received. Shutting down gracefully...`);
             
             try {
+                // Clear Friday reset timeout
+                if (this.fridayResetTimeout) {
+                    clearTimeout(this.fridayResetTimeout);
+                    console.log('✅ Friday reset scheduler stopped');
+                }
+                
                 // Stop server
                 if (this.server) {
                     this.server.close();
