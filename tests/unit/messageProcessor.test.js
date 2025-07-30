@@ -35,12 +35,12 @@ describe('MessageProcessor', () => {
             expect(result.dates[1].day()).toBe(3); // Wednesday
         });
 
-        test('should detect whole week reservation', () => {
+        test('should NOT detect whole week reservation for flex spots', () => {
             const text = 'voy toda la semana';
             const result = processor.processMessage(text);
             
-            expect(result.type).toBe('RESERVE_MULTIPLE');
-            expect(result.dates).toHaveLength(5); // Monday to Friday
+            // Should return UNKNOWN since "toda la semana" is no longer supported for flex spots
+            expect(result.type).toBe('UNKNOWN');
         });
 
         test('should handle next week reservations', () => {

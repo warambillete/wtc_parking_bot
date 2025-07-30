@@ -6,7 +6,7 @@ class MessageProcessor {
             /\b(voy|vengo|necesito|quiero|reservo|reservar)\s+(el\s+)?(lunes|martes|mi[eé]rcoles|jueves|viernes)\b/i,
             /\b(voy|vengo|necesito|quiero|reservo|reservar)\s+(ma[ñn]ana)\b/i,
             /\b(voy|vengo|necesito|quiero|reservo|reservar)\s+(hoy)\b/i,
-            /\b(voy|vengo|necesito|quiero|reservo|reservar)\s+(toda\s+la\s+semana)\b/i,
+            // Removed "toda la semana" pattern for flex spots
             /\b(voy|vengo|necesito|quiero|reservo|reservar)\s+.*?(lunes|martes|mi[eé]rcoles|jueves|viernes).*?(y|,).*?(lunes|martes|mi[eé]rcoles|jueves|viernes)/i,
             /\b(reservar|reservo)\s+(lunes|martes|mi[eé]rcoles|jueves|viernes)\b/i,
             /\b(reservar|reservo)\s+.*?(lunes|martes|mi[eé]rcoles|jueves|viernes).*?(y|,).*?(lunes|martes|mi[eé]rcoles|jueves|viernes)/i,

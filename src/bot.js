@@ -489,7 +489,6 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
 📅 *Reservar:*
 • "voy el lunes" - Un día
 • "voy lunes y miércoles" - Múltiples días
-• "voy toda la semana" - Lunes a viernes
 
 🔓 *Liberar:*
 • "libero el martes" / "no voy el jueves"
