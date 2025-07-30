@@ -177,18 +177,57 @@ describe('WTC Parking Bot Rules Validation', () => {
     });
 
     describe('Future Booking Prevention', () => {
-        test('should prevent booking beyond current active week', async () => {
-            // Find a date that's clearly in the future (2 weeks ahead)
-            const futureDate = moment().tz('America/Montevideo').add(2, 'weeks').day(2); // Tuesday, 2 weeks ahead
+        test('should prevent next week booking on Wednesday (critical test)', async () => {
+            // Test the exact scenario: Wednesday trying to book next Monday
+            const nextMonday = moment().tz('America/Montevideo').add(1, 'week').day(1);
             
-            const result = await queueManager.handleReservation('123', { first_name: 'Test' }, futureDate);
+            // Mock Wednesday (day 3)
+            const originalNow = moment.now;
+            const mockWednesday = moment().tz('America/Montevideo').day(3).hour(14); // Wednesday 2PM
+            moment.now = () => mockWednesday.valueOf();
             
-            // Should either reject as "next week" when not in booking period, or allow if in normal booking period
-            // The key is that it shouldn't allow booking for weeks beyond the current active week
-            if (!queueManager.isNextWeekBookingAllowed()) {
-                expect(result.success).toBe(false);
-            }
-            // If booking is allowed, it means we're in the active booking period for that week
+            const result = await queueManager.handleReservation('123', { first_name: 'Test' }, nextMonday);
+            
+            // Should be rejected because it's Wednesday and next week booking not allowed
+            expect(result.success).toBe(false);
+            expect(result.message).toContain('próxima semana');
+            
+            moment.now = originalNow;
+        });
+
+        test('should allow next week booking on Friday after 17:15', async () => {
+            const nextMonday = moment().tz('America/Montevideo').add(1, 'week').day(1);
+            
+            // Mock Friday 17:20 (after lottery)
+            const originalNow = moment.now;
+            const mockFridayAfter = moment().tz('America/Montevideo').day(5).hour(17).minute(20);
+            moment.now = () => mockFridayAfter.valueOf();
+            
+            const result = await queueManager.handleReservation('123', { first_name: 'Test' }, nextMonday);
+            
+            // Should be allowed because it's Friday after 17:15
+            expect(result.success).toBe(true);
+            expect(result.spotNumber).toBeDefined();
+            
+            moment.now = originalNow;
+        });
+        
+        test('should use lottery during Friday 17:00-17:15', async () => {
+            const nextMonday = moment().tz('America/Montevideo').add(1, 'week').day(1);
+            
+            // Mock Friday 17:05 (during lottery)
+            const originalNow = moment.now;
+            const mockFridayLottery = moment().tz('America/Montevideo').day(5).hour(17).minute(5);
+            moment.now = () => mockFridayLottery.valueOf();
+            
+            const result = await queueManager.handleReservation('123', { first_name: 'Test' }, nextMonday);
+            
+            // Should be queued for lottery
+            expect(result.success).toBe(true);
+            expect(result.queued).toBe(true);
+            expect(result.message).toContain('lotería');
+            
+            moment.now = originalNow;
         });
     });
 });

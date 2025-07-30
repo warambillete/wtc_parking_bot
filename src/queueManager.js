@@ -20,23 +20,27 @@ class QueueManager {
     }
 
     // Check if reservation is for next week (the lottery target)
-    // "Next week" means the work week that starts after the next Friday 5PM reset
+    // "Next week" means the work week that gets reset at the next Friday 5PM
     isNextWeekReservation(targetDate) {
         const now = moment().tz('America/Montevideo');
         
-        // Find the next Friday 5PM reset point
-        let nextReset;
-        if (now.day() === 5 && now.hour() < 17) {
-            // Today is Friday before 5PM - next reset is today at 5PM
-            nextReset = now.clone().hour(17).minute(0).second(0);
-        } else {
-            // Next reset is next Friday at 5PM
-            nextReset = now.clone().day(5 + 7).hour(17).minute(0).second(0);
-        }
+        // Determine what "next week" means based on current time
+        let nextWeekStart, nextWeekEnd;
         
-        // "Next week" is Monday to Friday AFTER the next reset
-        const nextWeekStart = nextReset.clone().add(3, 'days').day(1); // Monday after reset Friday
-        const nextWeekEnd = nextReset.clone().add(1, 'week').day(5); // Friday after reset Friday
+        if (now.day() === 5 && (now.hour() > 17 || (now.hour() === 17 && now.minute() >= 15))) {
+            // Friday after 5:15PM - we're already in the booking period for "next week"
+            // "Next week" is the current week that just got reset
+            nextWeekStart = now.clone().day(1); // This Monday
+            nextWeekEnd = now.clone().day(5);   // This Friday
+        } else if (now.day() === 6 || now.day() === 0) {
+            // Weekend - we're in the booking period for current week
+            nextWeekStart = now.clone().day(1); // This Monday
+            nextWeekEnd = now.clone().day(5);   // This Friday
+        } else {
+            // Monday to Friday before 5PM - "next week" is the upcoming Monday-Friday
+            nextWeekStart = now.clone().add(1, 'week').day(1); // Next Monday
+            nextWeekEnd = now.clone().add(1, 'week').day(5);   // Next Friday
+        }
         
         return targetDate.isBetween(nextWeekStart, nextWeekEnd, 'day', '[]');
     }
@@ -251,28 +255,21 @@ class QueueManager {
         console.log('🧹 Todas las colas han sido limpiadas');
     }
 
-    // Check if we're after Friday 5PM reset but before next Friday 5PM
+    // Check if we're after Friday 5:15PM (end of lottery) and allowed to book next week
     isNextWeekBookingAllowed() {
         const now = moment().tz('America/Montevideo');
         
-        // Find when the current booking period started (last Friday 5PM)
-        let lastReset;
-        if (now.day() === 5 && now.hour() >= 17) {
-            // Today is Friday after 5PM - reset happened today
-            lastReset = now.clone().hour(17).minute(0).second(0);
+        // Next week booking is only allowed after Friday 17:15
+        if (now.day() === 5) {
+            // Today is Friday - only allow after 17:15
+            return now.hour() > 17 || (now.hour() === 17 && now.minute() >= 15);
+        } else if (now.day() === 6 || now.day() === 0) {
+            // Saturday or Sunday - allowed (after Friday reset)
+            return true;
         } else {
-            // Last reset was previous Friday
-            lastReset = now.clone().day(5 - 7).hour(17).minute(0).second(0);
+            // Monday to Thursday - NOT allowed for next week
+            return false;
         }
-        
-        // Find next Friday 5PM (end of booking period)
-        let nextReset = now.clone().day(5 + 7).hour(17).minute(0).second(0);
-        if (now.day() === 5 && now.hour() < 17) {
-            nextReset = now.clone().hour(17).minute(0).second(0);
-        }
-        
-        // We're in the booking period if we're after last reset and before next reset
-        return now.isAfter(lastReset);
     }
 
     // Handle reservation - main entry point called by webhook bot
