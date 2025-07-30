@@ -100,6 +100,18 @@ class Database {
     }
     
     migrateFixedSpotsTable() {
+        // Skip migration in test environment - just create new table
+        if (process.env.NODE_ENV === 'test') {
+            this.db.run(`
+                CREATE TABLE IF NOT EXISTS fixed_spots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    spot_number TEXT UNIQUE NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
+            return;
+        }
+        
         // Check if old fixed_spots table exists and has old structure
         this.db.get("PRAGMA table_info(fixed_spots)", (err, result) => {
             if (err) {
@@ -162,6 +174,21 @@ class Database {
     }
     
     migrateFixedSpotReleasesTable() {
+        // Skip migration in test environment - just create new table
+        if (process.env.NODE_ENV === 'test') {
+            this.db.run(`
+                CREATE TABLE IF NOT EXISTS fixed_spot_releases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    spot_number TEXT NOT NULL,
+                    start_date TEXT NOT NULL,
+                    end_date TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (spot_number) REFERENCES fixed_spots(spot_number)
+                )
+            `);
+            return;
+        }
+        
         // Check if fixed_spot_releases table exists and has old structure
         this.db.get("PRAGMA table_info(fixed_spot_releases)", (err, result) => {
             if (err) {

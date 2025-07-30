@@ -10,12 +10,9 @@ describe('Fixed Spaces Feature Tests', () => {
         await db.init();
         messageProcessor = new MessageProcessor();
         
-        // Set up some fixed spots
-        const fixedSpots = [
-            { number: '8033', userId: '100', username: 'juan', firstName: 'Juan', lastName: 'Pérez' },
-            { number: '8034', userId: '200', username: 'maria', firstName: 'María', lastName: 'García' }
-        ];
-        await db.setFixedSpots(fixedSpots);
+        // Set up some fixed spots using the new simplified method
+        const spotNumbers = ['8033', '8034'];
+        await db.setFixedSpotNumbers(spotNumbers);
     });
     
     afterEach(() => {
@@ -75,19 +72,18 @@ describe('Fixed Spaces Feature Tests', () => {
 
     describe('Database Operations', () => {
         test('should store and retrieve fixed spots', async () => {
-            const fixedSpot = await db.getFixedSpot('8033');
+            const fixedSpots = await db.getFixedSpots();
             
-            expect(fixedSpot).toBeTruthy();
-            expect(fixedSpot.spot_number).toBe('8033');
-            expect(fixedSpot.owner_user_id).toBe('100');
-            expect(fixedSpot.owner_first_name).toBe('Juan');
+            expect(fixedSpots).toHaveLength(2);
+            expect(fixedSpots.map(s => s.spot_number)).toContain('8033');
+            expect(fixedSpots.map(s => s.spot_number)).toContain('8034');
         });
 
         test('should release fixed spot for date range', async () => {
             const startDate = moment().add(1, 'day').format('YYYY-MM-DD');
             const endDate = moment().add(3, 'days').format('YYYY-MM-DD');
             
-            await db.releaseFixedSpot('8033', '100', startDate, endDate);
+            await db.releaseFixedSpot('8033', startDate, endDate);
             
             // Check that spot is released for those dates
             const releasedSpots = await db.getReleasedFixedSpots(startDate);
@@ -101,10 +97,10 @@ describe('Fixed Spaces Feature Tests', () => {
             const endDate = moment().add(3, 'days').format('YYYY-MM-DD');
             
             // First release the spot
-            await db.releaseFixedSpot('8033', '100', startDate, endDate);
+            await db.releaseFixedSpot('8033', startDate, endDate);
             
             // Then remove the release
-            const removed = await db.removeFixedSpotRelease('8033', '100');
+            const removed = await db.removeFixedSpotRelease('8033');
             
             expect(removed).toBeGreaterThan(0);
             
@@ -117,7 +113,7 @@ describe('Fixed Spaces Feature Tests', () => {
             const tomorrow = moment().add(1, 'day').format('YYYY-MM-DD');
             
             // Release a fixed spot
-            await db.releaseFixedSpot('8033', '100', tomorrow, tomorrow);
+            await db.releaseFixedSpot('8033', tomorrow, tomorrow);
             
             // Check available spots
             const availableSpot = await db.getAvailableSpot(tomorrow);
@@ -133,7 +129,7 @@ describe('Fixed Spaces Feature Tests', () => {
             await db.setParkingSpots(['1', '2']);
             
             // Release a fixed spot
-            await db.releaseFixedSpot('8033', '100', tomorrow, tomorrow);
+            await db.releaseFixedSpot('8033', tomorrow, tomorrow);
             
             // Get day status
             const dayStatus = await db.getDayStatus(tomorrow);
@@ -148,8 +144,8 @@ describe('Fixed Spaces Feature Tests', () => {
         test('released fixed spot can be reserved by others', async () => {
             const tomorrow = moment().add(1, 'day').format('YYYY-MM-DD');
             
-            // Owner releases their fixed spot
-            await db.releaseFixedSpot('8033', '100', tomorrow, tomorrow);
+            // Any user can release a fixed spot
+            await db.releaseFixedSpot('8033', tomorrow, tomorrow);
             
             // Another user can reserve it
             const availableSpot = await db.getAvailableSpot(tomorrow);
@@ -164,13 +160,16 @@ describe('Fixed Spaces Feature Tests', () => {
             expect(reservation.spot_number).toBe('8033');
         });
 
-        test('owner cannot release spot they do not own', async () => {
-            // This would be handled in the webhook handler
-            const fixedSpot = await db.getFixedSpot('8033');
-            expect(fixedSpot.owner_user_id).toBe('100');
+        test('system validates spot is in fixed list before allowing release', async () => {
+            // Try to release a spot that's not in the fixed list
+            const isFixed = await db.isFixedSpot('9999');
+            expect(isFixed).toBe(false);
             
-            // If user 200 tries to release 8033, the handler should reject it
-            expect(fixedSpot.owner_user_id).not.toBe('200');
+            // Verify spots that are in the fixed list
+            const isFixed8033 = await db.isFixedSpot('8033');
+            const isFixed8034 = await db.isFixedSpot('8034');
+            expect(isFixed8033).toBe(true);
+            expect(isFixed8034).toBe(true);
         });
     });
 });

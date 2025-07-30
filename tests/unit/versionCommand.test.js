@@ -1,8 +1,8 @@
 const packageInfo = require('../../package.json');
 
 describe('Version Command', () => {
-    test('should have version 1.2.0', () => {
-        expect(packageInfo.version).toBe('1.2.0');
+    test('should have version 1.3.0', () => {
+        expect(packageInfo.version).toBe('1.3.0');
     });
     
     test('should have correct package name', () => {
