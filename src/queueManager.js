@@ -80,7 +80,7 @@ class QueueManager {
         return {
             success: true,
             queued: true,
-            message: `📋 Tu solicitud para ${targetDate.format('dddd DD/MM')} está en la cola de lotería.\n\n⏰ La asignación será el viernes a las 17:15.\n🎲 Todos los solicitantes tendrán la misma oportunidad.\n\n👥 Posición en cola: ${queue.length}`
+            message: `📋 Tu solicitud para ${targetDate.format('dddd DD/MM')} ha sido recibida.\n\n⏰ La asignación de espacios será el viernes a las 17:15.\n\n👥 Posición en cola: ${queue.length}`
         };
     }
 
@@ -187,12 +187,12 @@ class QueueManager {
         // Send individual notifications
         for (const { chatId, result, user } of results) {
             try {
-                let message = `🎲 **Resultado de Lotería - ${targetDate.format('dddd DD/MM')}**\n\n`;
+                let message = `📋 **Asignación de Espacios - ${targetDate.format('dddd DD/MM')}**\n\n`;
                 
                 if (result.success) {
                     message += `🎉 ¡Felicitaciones! Tienes asignado el estacionamiento **${result.spotNumber}**`;
                 } else if (result.waitlist) {
-                    message += `📝 No obtuviste espacio en la lotería, pero fuiste añadido a la lista de espera.\n\nSi alguien libera su espacio, te notificaremos inmediatamente.`;
+                    message += `📝 No hay espacios disponibles en este momento, pero fuiste añadido a la lista de espera.\n\nSi alguien libera su espacio, te notificaremos inmediatamente.`;
                 } else {
                     message += `❌ ${result.message}`;
                 }
@@ -205,7 +205,7 @@ class QueueManager {
 
         // Send summary to supervisor if configured
         if (process.env.SUPERVISOR_USER_ID) {
-            const summary = `📊 **Resumen Lotería ${targetDate.format('dddd DD/MM')}:**\n\n` +
+            const summary = `📊 **Resumen Asignación ${targetDate.format('dddd DD/MM')}:**\n\n` +
                            `🎯 Solicitudes totales: ${results.length}\n` +
                            `✅ Espacios asignados: ${successful.length}\n` +
                            `📝 En lista de espera: ${waitlisted.length}`;
@@ -329,7 +329,7 @@ class QueueManager {
                 // Before Friday 5PM - no next week bookings allowed
                 return {
                     success: false,
-                    message: `Las reservas para la próxima semana estarán disponibles después del viernes 17:00. Durante 17:00-17:15 habrá un período de lotería, después será reserva normal.`
+                    message: `Las reservas para la próxima semana estarán disponibles después del viernes 17:00.`
                 };
             }
         } else {

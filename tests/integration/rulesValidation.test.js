@@ -222,10 +222,10 @@ describe('WTC Parking Bot Rules Validation', () => {
             
             const result = await queueManager.handleReservation('123', { first_name: 'Test' }, nextMonday);
             
-            // Should be queued for lottery
+            // Should be queued (lottery is internal, users don't see it)
             expect(result.success).toBe(true);
             expect(result.queued).toBe(true);
-            expect(result.message).toContain('lotería');
+            expect(result.message).toContain('solicitud');
             
             moment.now = originalNow;
         });
