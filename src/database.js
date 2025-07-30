@@ -11,14 +11,14 @@ class Database {
                 console.log('📁 Using provided database path:', dbPath);
             }
         } else {
-            // Use Render's persistent disk at /data if available, otherwise local data directory
-            const isPersistentDiskAvailable = fs.existsSync('/data');
+            // Use Render's persistent disk at /var/data if available, otherwise local data directory
+            const isPersistentDiskAvailable = fs.existsSync('/var/data');
             
             if (isPersistentDiskAvailable) {
                 // Production: Use Render's persistent disk
-                this.dbPath = '/data/parking.db';
+                this.dbPath = '/var/data/parking.db';
                 if (process.env.NODE_ENV !== 'test') {
-                    console.log('📁 Using Render persistent disk at /data/parking.db');
+                    console.log('📁 Using Render persistent disk at /var/data/parking.db');
                 }
             } else {
                 // Development: Use local data directory
