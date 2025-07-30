@@ -250,11 +250,23 @@ class WTCParkBotWebhook {
             }
             
             const spotNumbers = fixedStr.split(',').map(n => n.trim()).filter(n => n.length > 0);
+            console.log('🔧 Setting fixed spots:', spotNumbers);
             
             if (spotNumbers.length > 0) {
-                await this.db.setFixedSpotNumbers(spotNumbers);
-                await this.bot.sendMessage(chatId, 
-                    `✅ Espacios fijos configurados:\n${spotNumbers.map(s => `• ${s}`).join('\n')}`);
+                try {
+                    await this.db.setFixedSpotNumbers(spotNumbers);
+                    console.log('✅ Fixed spots saved successfully');
+                    
+                    // Verify they were saved
+                    const savedSpots = await this.db.getFixedSpots();
+                    console.log('🔍 Verification - spots in DB:', JSON.stringify(savedSpots));
+                    
+                    await this.bot.sendMessage(chatId, 
+                        `✅ Espacios fijos configurados:\n${spotNumbers.map(s => `• ${s}`).join('\n')}`);
+                } catch (error) {
+                    console.error('❌ Error saving fixed spots:', error);
+                    await this.bot.sendMessage(chatId, '❌ Error guardando espacios fijos');
+                }
             } else {
                 await this.bot.sendMessage(chatId, '❌ No se pudo procesar ningún espacio fijo');
             }
@@ -502,7 +514,9 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
     
     async handleFixedList(msg) {
         try {
+            console.log('🔍 Getting fixed spots from database...');
             const fixedSpots = await this.db.getFixedSpots();
+            console.log('🔍 Fixed spots retrieved:', JSON.stringify(fixedSpots));
             
             if (fixedSpots.length === 0) {
                 await this.bot.sendMessage(msg.chat.id, '📋 No hay espacios fijos configurados.');
