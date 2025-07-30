@@ -69,6 +69,24 @@ class MessageProcessor {
             return { type: 'HELP' };
         }
         
+        // Verificar si es liberación FIRST (has priority over reservations)
+        for (const pattern of this.releasePatterns) {
+            const match = text.match(pattern);
+            if (match) {
+                // Verificar si son múltiples días para liberar
+                const multipleDays = this.processMultipleDays(text);
+                if (multipleDays.length > 1) {
+                    return { type: 'RELEASE_MULTIPLE', dates: multipleDays };
+                }
+                
+                // Un solo día
+                const date = this.extractDate(text, match);
+                if (date) {
+                    return { type: 'RELEASE', date };
+                }
+            }
+        }
+        
         // Verificar si es reserva
         for (const pattern of this.reservePatterns) {
             const match = text.match(pattern);
@@ -91,24 +109,6 @@ class MessageProcessor {
                 const date = this.extractDate(text, match);
                 if (date) {
                     return { type: 'RESERVE', date };
-                }
-            }
-        }
-        
-        // Verificar si es liberación
-        for (const pattern of this.releasePatterns) {
-            const match = text.match(pattern);
-            if (match) {
-                // Verificar si son múltiples días para liberar
-                const multipleDays = this.processMultipleDays(text);
-                if (multipleDays.length > 1) {
-                    return { type: 'RELEASE_MULTIPLE', dates: multipleDays };
-                }
-                
-                // Un solo día
-                const date = this.extractDate(text, match);
-                if (date) {
-                    return { type: 'RELEASE', date };
                 }
             }
         }
@@ -144,11 +144,14 @@ class MessageProcessor {
                     }
                 }
                 
-                console.log(`📅 Procesando fecha:
-                Texto: "${text}"
-                Día solicitado: ${dayName} (${targetDay})
-                Fecha calculada: ${targetDate.format('dddd DD/MM/YYYY')}
-                Es próxima semana: ${isNextWeek}`);
+                // Only log in non-test environments
+                if (process.env.NODE_ENV !== 'test') {
+                    console.log(`📅 Procesando fecha:
+                    Texto: "${text}"
+                    Día solicitado: ${dayName} (${targetDay})
+                    Fecha calculada: ${targetDate.format('dddd DD/MM/YYYY')}
+                    Es próxima semana: ${isNextWeek}`);
+                }
                 
                 return targetDate;
             }

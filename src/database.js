@@ -3,26 +3,37 @@ const path = require('path');
 const fs = require('fs');
 
 class Database {
-    constructor() {
-        // Use Render's persistent disk at /data if available, otherwise local data directory
-        const isPersistentDiskAvailable = fs.existsSync('/data');
-        
-        if (isPersistentDiskAvailable) {
-            // Production: Use Render's persistent disk
-            this.dbPath = '/data/parking.db';
-            console.log('📁 Using Render persistent disk at /data/parking.db');
-        } else {
-            // Development: Use local data directory
-            const dataDir = path.join(__dirname, '..', 'data');
-            if (!fs.existsSync(dataDir)) {
-                fs.mkdirSync(dataDir, { recursive: true });
+    constructor(dbPath = null) {
+        if (dbPath) {
+            // Use provided path (for tests)
+            this.dbPath = dbPath;
+            if (process.env.NODE_ENV !== 'test') {
+                console.log('📁 Using provided database path:', dbPath);
             }
-            this.dbPath = path.join(dataDir, 'parking.db');
-            console.log('📁 Using local database at', this.dbPath);
+        } else {
+            // Use Render's persistent disk at /data if available, otherwise local data directory
+            const isPersistentDiskAvailable = fs.existsSync('/data');
+            
+            if (isPersistentDiskAvailable) {
+                // Production: Use Render's persistent disk
+                this.dbPath = '/data/parking.db';
+                if (process.env.NODE_ENV !== 'test') {
+                    console.log('📁 Using Render persistent disk at /data/parking.db');
+                }
+            } else {
+                // Development: Use local data directory
+                const dataDir = path.join(__dirname, '..', 'data');
+                if (!fs.existsSync(dataDir)) {
+                    fs.mkdirSync(dataDir, { recursive: true });
+                }
+                this.dbPath = path.join(dataDir, 'parking.db');
+                if (process.env.NODE_ENV !== 'test') {
+                    console.log('📁 Using local database at', this.dbPath);
+                }
+            }
         }
         
         this.db = new sqlite3.Database(this.dbPath);
-        this.init();
     }
     
     init() {
@@ -75,7 +86,9 @@ class Database {
             this.db.run(`CREATE INDEX IF NOT EXISTS idx_waitlist_position ON waitlist(date, position)`);
         });
         
-        console.log('✅ Base de datos inicializada');
+        if (process.env.NODE_ENV !== 'test') {
+            console.log('✅ Base de datos inicializada');
+        }
     }
     
     // Métodos para espacios de estacionamiento
@@ -392,9 +405,13 @@ class Database {
     close() {
         this.db.close((err) => {
             if (err) {
-                console.error('Error cerrando la base de datos:', err);
+                if (process.env.NODE_ENV !== 'test') {
+                    console.error('Error cerrando la base de datos:', err);
+                }
             } else {
-                console.log('Base de datos cerrada');
+                if (process.env.NODE_ENV !== 'test') {
+                    console.log('Base de datos cerrada');
+                }
             }
         });
     }
