@@ -79,14 +79,8 @@ class Database {
                 )
             `);
             
-            // Tabla de espacios fijos (solo números)
-            this.db.run(`
-                CREATE TABLE IF NOT EXISTS fixed_spots (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    spot_number TEXT UNIQUE NOT NULL,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            `);
+            // Migrate fixed_spots table if needed
+            this.migrateFixedSpotsTable();
             
             // Tabla de liberaciones temporales de espacios fijos
             this.db.run(`
@@ -112,6 +106,68 @@ class Database {
         if (process.env.NODE_ENV !== 'test') {
             console.log('✅ Base de datos inicializada');
         }
+    }
+    
+    migrateFixedSpotsTable() {
+        // Check if old fixed_spots table exists and has old structure
+        this.db.get("PRAGMA table_info(fixed_spots)", (err, result) => {
+            if (err) {
+                console.log('🔄 Creating new fixed_spots table...');
+                // Table doesn't exist, create new one
+                this.db.run(`
+                    CREATE TABLE IF NOT EXISTS fixed_spots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        spot_number TEXT UNIQUE NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+                return;
+            }
+            
+            // Check if table has old structure (owner_user_id column)
+            this.db.all("PRAGMA table_info(fixed_spots)", (err, columns) => {
+                if (err) return;
+                
+                const hasOwnerColumn = columns.some(col => col.name === 'owner_user_id');
+                
+                if (hasOwnerColumn) {
+                    console.log('🔄 Migrating fixed_spots table to new structure...');
+                    
+                    // Backup existing data
+                    this.db.all("SELECT spot_number FROM fixed_spots", (err, existingData) => {
+                        if (err) {
+                            console.error('Error reading existing fixed spots:', err);
+                            return;
+                        }
+                        
+                        // Drop old table and create new one
+                        this.db.serialize(() => {
+                            this.db.run("DROP TABLE IF EXISTS fixed_spots");
+                            this.db.run(`
+                                CREATE TABLE fixed_spots (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                    spot_number TEXT UNIQUE NOT NULL,
+                                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                                )
+                            `);
+                            
+                            // Restore data (only spot numbers)
+                            if (existingData && existingData.length > 0) {
+                                const stmt = this.db.prepare('INSERT INTO fixed_spots (spot_number) VALUES (?)');
+                                existingData.forEach(row => {
+                                    stmt.run(row.spot_number);
+                                });
+                                stmt.finalize();
+                                console.log(`✅ Migrated ${existingData.length} fixed spots to new structure`);
+                            }
+                        });
+                    });
+                } else {
+                    // Table already has correct structure
+                    console.log('✅ Fixed spots table already has correct structure');
+                }
+            });
+        });
     }
     
     // Métodos para espacios de estacionamiento
