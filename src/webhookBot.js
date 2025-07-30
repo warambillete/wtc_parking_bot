@@ -7,7 +7,7 @@ const ParkingManager = require('./parkingManager');
 const QueueManager = require('./queueManager');
 
 moment.locale('es');
-moment.tz.setDefault('America/Mexico_City');
+moment.tz.setDefault('America/Montevideo');
 
 class WTCParkBotWebhook {
     constructor() {
@@ -100,6 +100,9 @@ class WTCParkBotWebhook {
         
         // Handle graceful shutdown
         this.setupGracefulShutdown();
+        
+        // Setup automatic cleanup scheduler
+        this.setupAutomaticCleanup();
     }
     
     setupHandlers() {
@@ -229,10 +232,34 @@ class WTCParkBotWebhook {
     }
     
     async handleMultipleReservations(msg, intent) {
-        const results = await this.parkingManager.reserveMultipleDays(msg.from.id, msg.from, intent.dates);
+        const results = [];
+        
+        // Process each date individually through QueueManager to respect lottery system
+        for (const date of intent.dates) {
+            try {
+                const result = await this.queueManager.handleReservation(msg.from.id, msg.from, date);
+                results.push({
+                    date: date,
+                    success: result.success,
+                    spotNumber: result.spotNumber,
+                    message: result.message,
+                    queued: result.queued,
+                    waitlist: result.waitlist
+                });
+            } catch (error) {
+                console.error(`Error processing reservation for ${date.format('YYYY-MM-DD')}:`, error);
+                results.push({
+                    date: date,
+                    success: false,
+                    message: 'Error interno procesando la reserva'
+                });
+            }
+        }
         
         const successful = results.filter(r => r.success);
-        const failed = results.filter(r => !r.success);
+        const queued = results.filter(r => r.queued);
+        const waitlisted = results.filter(r => r.waitlist);
+        const failed = results.filter(r => !r.success && !r.queued && !r.waitlist);
         
         let responseText = '';
         
@@ -240,6 +267,20 @@ class WTCParkBotWebhook {
             responseText += `✅ Reservas exitosas:\n`;
             successful.forEach(r => {
                 responseText += `• ${r.date.format('dddd DD/MM')}: Estacionamiento ${r.spotNumber}\n`;
+            });
+        }
+        
+        if (queued.length > 0) {
+            responseText += `\n🎲 En cola de lotería:\n`;
+            queued.forEach(r => {
+                responseText += `• ${r.date.format('dddd DD/MM')}: En cola para sorteo del viernes 17:15\n`;
+            });
+        }
+        
+        if (waitlisted.length > 0) {
+            responseText += `\n📝 Ofrecidas para lista de espera:\n`;
+            waitlisted.forEach(r => {
+                responseText += `• ${r.date.format('dddd DD/MM')}: Sin espacios disponibles\n`;
             });
         }
         
@@ -251,6 +292,22 @@ class WTCParkBotWebhook {
         }
         
         await this.bot.sendMessage(msg.chat.id, responseText);
+        
+        // Handle waitlist offers for dates that need it
+        const waitlistOffers = results.filter(r => r.waitlist);
+        if (waitlistOffers.length > 0) {
+            for (const offer of waitlistOffers) {
+                await this.bot.sendMessage(msg.chat.id, 
+                    `🚫 No hay espacios disponibles para ${offer.date.format('dddd DD/MM')}. ¿Te añado a la lista de espera?`, {
+                    reply_markup: {
+                        inline_keyboard: [[
+                            { text: 'Sí, añádeme', callback_data: `waitlist_yes_${msg.from.id}_${offer.date.format('YYYY-MM-DD')}` },
+                            { text: 'No, gracias', callback_data: 'waitlist_no' }
+                        ]]
+                    }
+                });
+            }
+        }
     }
     
     async handleRelease(msg, intent) {
@@ -268,9 +325,32 @@ class WTCParkBotWebhook {
     }
     
     async handleMultipleReleases(msg, intent) {
-        const results = await Promise.all(
-            intent.dates.map(date => this.parkingManager.releaseSpot(msg.from.id, date))
-        );
+        const results = [];
+        
+        // Process each release individually to properly handle waitlist notifications
+        for (let i = 0; i < intent.dates.length; i++) {
+            try {
+                const result = await this.parkingManager.releaseSpot(msg.from.id, intent.dates[i]);
+                results.push({
+                    date: intent.dates[i],
+                    success: result.success,
+                    spotNumber: result.spotNumber,
+                    message: result.message
+                });
+                
+                // Notify waitlist for successful releases
+                if (result.success) {
+                    await this.queueManager.notifyWaitlist(intent.dates[i], result.spotNumber);
+                }
+            } catch (error) {
+                console.error(`Error releasing spot for ${intent.dates[i].format('YYYY-MM-DD')}:`, error);
+                results.push({
+                    date: intent.dates[i],
+                    success: false,
+                    message: 'Error interno liberando la reserva'
+                });
+            }
+        }
         
         const successful = results.filter(r => r.success);
         const failed = results.filter(r => !r.success);
@@ -280,14 +360,14 @@ class WTCParkBotWebhook {
         if (successful.length > 0) {
             responseText += `✅ Liberaciones exitosas:\n`;
             successful.forEach(r => {
-                responseText += `• Estacionamiento ${r.spotNumber}\n`;
+                responseText += `• ${r.date.format('dddd DD/MM')}: Estacionamiento ${r.spotNumber}\n`;
             });
         }
         
         if (failed.length > 0) {
             responseText += `\n❌ No se pudieron liberar:\n`;
             failed.forEach(r => {
-                responseText += `• ${r.message}\n`;
+                responseText += `• ${r.date.format('dddd DD/MM')}: ${r.message}\n`;
             });
         }
         
@@ -380,11 +460,54 @@ Si no hay espacios, te ofreceremos lista de espera automáticamente.
         await this.bot.answerCallbackQuery(query.id);
     }
     
+    setupAutomaticCleanup() {
+        const scheduleNextCleanup = () => {
+            const now = moment().tz('America/Montevideo');
+            
+            // Schedule for next day at 00:30 (30 minutes after midnight)
+            const nextCleanup = now.clone().add(1, 'day').hour(0).minute(30).second(0);
+            const timeUntilCleanup = nextCleanup.diff(now);
+            
+            console.log(`🧹 Next automatic cleanup scheduled for: ${nextCleanup.format('dddd DD/MM/YYYY HH:mm')}`);
+            
+            this.cleanupTimeout = setTimeout(async () => {
+                try {
+                    console.log('🧹 Running automatic cleanup of expired reservations...');
+                    await this.db.cleanupExpiredReservations();
+                    
+                    // Send notification to supervisor if configured
+                    if (this.supervisorId) {
+                        try {
+                            await this.bot.sendMessage(this.supervisorId, 
+                                `🧹 Limpieza automática completada: eliminadas reservas y listas de espera de fechas pasadas.`);
+                        } catch (error) {
+                            console.error('Error sending cleanup notification to supervisor:', error);
+                        }
+                    }
+                } catch (error) {
+                    console.error('❌ Error during automatic cleanup:', error);
+                }
+                
+                // Schedule next cleanup
+                scheduleNextCleanup();
+            }, timeUntilCleanup);
+        };
+        
+        // Start the cleanup scheduler
+        scheduleNextCleanup();
+    }
+    
     setupGracefulShutdown() {
         const shutdown = async (signal) => {
             console.log(`🛑 ${signal} received. Shutting down gracefully...`);
             
             try {
+                // Clear cleanup timeout
+                if (this.cleanupTimeout) {
+                    clearTimeout(this.cleanupTimeout);
+                    console.log('✅ Cleanup scheduler stopped');
+                }
+                
                 // Stop server
                 if (this.server) {
                     this.server.close();

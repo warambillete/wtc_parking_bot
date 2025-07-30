@@ -16,7 +16,7 @@ async function testWaitlist() {
         { userId: 333333, username: 'carlos', first_name: 'Carlos' }
     ];
     
-    const testDate = moment().tz('America/Argentina/Buenos_Aires').add(1, 'day');
+    const testDate = moment().tz('America/Montevideo').add(1, 'day');
     console.log(`📅 Test date: ${testDate.format('dddd DD/MM/YYYY')}\n`);
     
     try {

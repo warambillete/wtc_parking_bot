@@ -7,7 +7,7 @@ const ParkingManager = require('./parkingManager');
 const QueueManager = require('./queueManager');
 
 moment.locale('es');
-moment.tz.setDefault('America/Mexico_City');
+moment.tz.setDefault('America/Montevideo');
 
 class WTCParkBotWebhook {
     constructor() {

@@ -12,7 +12,7 @@ class QueueManager {
 
     // Check if we're in Friday 17:00-17:15 GMT-3 period
     isInQueuePeriod() {
-        const now = moment().tz('America/Argentina/Buenos_Aires');
+        const now = moment().tz('America/Montevideo');
         return now.day() === 5 && // Friday
                now.hour() === 17 && // 5 PM
                now.minute() < 15;   // Before 17:15
@@ -20,7 +20,7 @@ class QueueManager {
 
     // Check if reservation is for next week (the lottery target)
     isNextWeekReservation(targetDate) {
-        const now = moment().tz('America/Argentina/Buenos_Aires');
+        const now = moment().tz('America/Montevideo');
         const nextWeekStart = now.clone().add(1, 'week').day(1); // Next Monday
         const nextWeekEnd = now.clone().add(1, 'week').day(5); // Next Friday
         
@@ -68,7 +68,7 @@ class QueueManager {
 
     // Schedule the queue processing for 17:15
     scheduleQueueProcessing(dateStr, targetDate) {
-        const now = moment().tz('America/Argentina/Buenos_Aires');
+        const now = moment().tz('America/Montevideo');
         const processTime = now.clone().hour(17).minute(15).second(0);
         
         // If we're past 17:15 today, schedule for next Friday
@@ -235,6 +235,73 @@ class QueueManager {
         this.queues.clear();
         this.processingTimeouts.clear();
         console.log('🧹 Todas las colas han sido limpiadas');
+    }
+
+    // Handle reservation - main entry point called by webhook bot
+    async handleReservation(userId, user, targetDate) {
+        // Check if this is a next-week reservation during queue period (Friday 17:00-17:15)
+        if (this.isNextWeekReservation(targetDate) && this.isInQueuePeriod()) {
+            // Add to lottery queue
+            return await this.addToQueue(userId, user, targetDate, userId); // Use userId as chatId fallback
+        } else {
+            // Regular immediate reservation using ParkingManager
+            const ParkingManager = require('./parkingManager');
+            const parkingManager = new ParkingManager(this.db);
+            
+            const result = await parkingManager.reserveSpot(userId, user, targetDate);
+            
+            if (result.success) {
+                return {
+                    success: true,
+                    spotNumber: result.spotNumber
+                };
+            } else if (result.waitlist) {
+                return {
+                    success: false,
+                    waitlist: true
+                };
+            } else {
+                return {
+                    success: false,
+                    message: result.message
+                };
+            }
+        }
+    }
+
+    // Notify waitlist when a spot is released
+    async notifyWaitlist(date, spotNumber) {
+        const dateStr = date.format('YYYY-MM-DD');
+        const nextInLine = await this.db.getNextInWaitlist(dateStr);
+        
+        if (nextInLine) {
+            console.log(`📢 Notificando a ${nextInLine.first_name || nextInLine.username} sobre espacio liberado`);
+            
+            try {
+                // Assign the spot to the next person in waitlist
+                await this.db.createReservation(nextInLine.user_id, nextInLine, dateStr, spotNumber);
+                await this.db.removeFromWaitlist(nextInLine.user_id, dateStr);
+                
+                // Notify the user
+                try {
+                    await this.bot.sendMessage(nextInLine.user_id, 
+                        `🎉 ¡Buenas noticias! Se liberó un espacio y te hemos asignado el estacionamiento ${spotNumber} para ${date.format('dddd DD/MM')}`);
+                    
+                    console.log(`✅ Notificación enviada a ${nextInLine.first_name || nextInLine.username}`);
+                    return true;
+                } catch (error) {
+                    console.error('❌ Error enviando notificación de lista de espera:', error);
+                    // If notification fails, we should still keep the reservation assigned
+                    return true; // Reservation was successful, just notification failed
+                }
+            } catch (error) {
+                console.error('❌ Error asignando espacio de lista de espera:', error);
+                // Could be because spot is already taken or user already has reservation
+                return false;
+            }
+        }
+        
+        return false; // No one in waitlist
     }
 }
 

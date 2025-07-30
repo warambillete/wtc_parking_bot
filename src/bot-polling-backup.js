@@ -8,7 +8,7 @@ const SingleInstanceLock = require('./singleInstance');
 const BotKiller = require('./botKiller');
 
 moment.locale('es');
-moment.tz.setDefault('America/Mexico_City');
+moment.tz.setDefault('America/Montevideo');
 
 class WTCParkBot {
     constructor() {
@@ -180,7 +180,7 @@ class WTCParkBot {
     }
     
     async checkWeeklyReset() {
-        const now = moment().tz('America/Argentina/Buenos_Aires');
+        const now = moment().tz('America/Montevideo');
         
         // Verificar si es viernes y son las 17:00
         if (now.day() === 5 && now.hour() === 17 && now.minute() === 0) {
@@ -372,7 +372,7 @@ class WTCParkBot {
     }
     
     async handleReservation(chatId, userId, user, intent) {
-        const now = moment().tz('America/Argentina/Buenos_Aires');
+        const now = moment().tz('America/Montevideo');
         const targetDate = intent.date;
         
         // Validar reglas de tiempo
@@ -483,7 +483,7 @@ class WTCParkBot {
     }
     
     async handleDebug(chatId) {
-        const now = moment().tz('America/Argentina/Buenos_Aires');
+        const now = moment().tz('America/Montevideo');
         const startOfCurrentWeek = now.clone().startOf('week').add(1, 'day');
         const endOfCurrentWeek = now.clone().endOf('week').subtract(1, 'day');
         
@@ -504,7 +504,7 @@ class WTCParkBot {
     
     async handleQueuesStatus(chatId) {
         const queues = this.queueManager.getAllQueues();
-        const now = moment().tz('America/Argentina/Buenos_Aires');
+        const now = moment().tz('America/Montevideo');
         
         let message = `🎲 **Estado de Colas de Lotería:**\n\n`;
         message += `**Fecha/Hora actual:** ${now.format('dddd DD/MM HH:mm')}\n`;
@@ -633,7 +633,7 @@ class WTCParkBot {
     }
     
     async handleMultipleReservations(chatId, userId, user, intent) {
-        const now = moment().tz('America/Argentina/Buenos_Aires');
+        const now = moment().tz('America/Montevideo');
         const results = [];
         
         for (const date of intent.dates) {
@@ -713,7 +713,7 @@ class WTCParkBot {
     
     isValidReservationTime(now, targetDate) {
         // Asegurar que targetDate esté en la misma zona horaria
-        const targetDateLocal = targetDate.clone().tz('America/Argentina/Buenos_Aires');
+        const targetDateLocal = targetDate.clone().tz('America/Montevideo');
         
         // Calcular semana laboral actual (próximo lunes si hoy es fin de semana)
         let startOfCurrentWeek;

@@ -117,7 +117,7 @@ class MessageProcessor {
     }
     
     extractDate(text, match) {
-        const now = moment().tz('America/Argentina/Buenos_Aires');
+        const now = moment().tz('America/Montevideo');
         
         // Verificar si menciona "próxima semana"
         const isNextWeek = /pr[oó]xim[ao]\s+semana|la\s+pr[oó]xim[ao]\s+semana/i.test(text);
@@ -176,7 +176,7 @@ class MessageProcessor {
         const dayMatches = text.match(/(lunes|martes|mi[eé]rcoles|jueves|viernes)/gi);
         
         if (dayMatches) {
-            const now = moment().tz('America/Argentina/Buenos_Aires');
+            const now = moment().tz('America/Montevideo');
             const isNextWeek = /pr[oó]xim[ao]\s+semana|la\s+pr[oó]xim[ao]\s+semana/i.test(text);
             
             dayMatches.forEach(dayName => {
@@ -204,7 +204,7 @@ class MessageProcessor {
     
     // Método para obtener toda la semana (lunes a viernes)
     getWholeWeek(text) {
-        const now = moment().tz('America/Argentina/Buenos_Aires');
+        const now = moment().tz('America/Montevideo');
         const isNextWeek = /pr[oó]xim[ao]\s+semana|la\s+pr[oó]xim[ao]\s+semana/i.test(text);
         
         const days = [];

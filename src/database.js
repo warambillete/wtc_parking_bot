@@ -342,6 +342,35 @@ class Database {
         });
     }
     
+    async cleanupExpiredReservations() {
+        const moment = require('moment-timezone');
+        const yesterday = moment().tz('America/Montevideo').subtract(1, 'day').format('YYYY-MM-DD');
+        
+        return new Promise((resolve, reject) => {
+            this.db.serialize(() => {
+                // Clear expired reservations
+                this.db.run('DELETE FROM reservations WHERE date < ?', [yesterday], (err) => {
+                    if (err) {
+                        console.error('Error clearing expired reservations:', err);
+                        reject(err);
+                        return;
+                    }
+                    
+                    // Clear expired waitlist entries
+                    this.db.run('DELETE FROM waitlist WHERE date < ?', [yesterday], (err) => {
+                        if (err) {
+                            console.error('Error clearing expired waitlist:', err);
+                            reject(err);
+                        } else {
+                            console.log(`🧹 Cleanup completed: removed reservations and waitlist entries before ${yesterday}`);
+                            resolve();
+                        }
+                    });
+                });
+            });
+        });
+    }
+    
     async getSystemStats() {
         return new Promise((resolve, reject) => {
             this.db.serialize(() => {

@@ -80,7 +80,7 @@ class ParkingManager {
     }
     
     async getWeekStatus() {
-        const now = moment().tz('America/Argentina/Buenos_Aires');
+        const now = moment().tz('America/Montevideo');
         
         // Calcular semana laboral actual (lunes a viernes)
         let startOfWeek;
@@ -160,6 +160,40 @@ class ParkingManager {
         }
         
         return results;
+    }
+    
+    formatWeekStatus(weekStatus) {
+        let responseText = '📅 *Estado de la semana:*\n\n';
+        
+        for (const [dateStr, spots] of Object.entries(weekStatus)) {
+            const date = moment(dateStr);
+            const dayName = date.format('dddd DD/MM');
+            
+            const reservedSpots = spots.filter(spot => spot.reserved === 1);
+            const availableSpots = spots.filter(spot => spot.reserved === 0);
+            
+            responseText += `*${dayName}*\n`;
+            
+            if (reservedSpots.length > 0) {
+                responseText += `🚗 Ocupados: `;
+                const reservedNumbers = reservedSpots.map(spot => spot.spot_number).join(', ');
+                responseText += `${reservedNumbers}\n`;
+            }
+            
+            if (availableSpots.length > 0) {
+                responseText += `🅿️ Disponibles: `;
+                const availableNumbers = availableSpots.map(spot => spot.spot_number).join(', ');
+                responseText += `${availableNumbers}\n`;
+            }
+            
+            if (spots.length === 0) {
+                responseText += `⚠️ No hay espacios configurados\n`;
+            }
+            
+            responseText += '\n';
+        }
+        
+        return responseText;
     }
 }
 

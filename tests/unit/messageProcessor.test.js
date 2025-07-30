@@ -6,7 +6,7 @@ describe('MessageProcessor', () => {
 
     beforeEach(() => {
         processor = new MessageProcessor();
-        moment.tz.setDefault('America/Argentina/Buenos_Aires');
+        moment.tz.setDefault('America/Montevideo');
     });
 
     describe('Reserve Intent Detection', () => {
