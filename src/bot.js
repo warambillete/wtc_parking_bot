@@ -5,6 +5,7 @@ const MessageProcessor = require('./messageProcessor');
 const ParkingManager = require('./parkingManager');
 const QueueManager = require('./queueManager');
 const SingleInstanceLock = require('./singleInstance');
+const BotKiller = require('./botKiller');
 
 moment.locale('es');
 moment.tz.setDefault('America/Mexico_City');
@@ -24,7 +25,13 @@ class WTCParkBot {
     }
     
     async initializeBot() {
-        // Try to acquire lock
+        console.log('🚀 Starting WTC Parking Bot initialization...');
+        
+        // STEP 1: Aggressively kill all existing instances
+        const killer = new BotKiller(this.token);
+        await killer.killAllInstances();
+        
+        // STEP 2: Try to acquire lock
         const lockAcquired = await this.instanceLock.acquireLock();
         
         if (!lockAcquired) {
@@ -57,7 +64,24 @@ class WTCParkBot {
             });
         } else {
             console.log('🤖 Bot iniciando en modo POLLING (sin webhook)');
-            this.bot = new TelegramBot(this.token, { polling: true });
+            
+            // STEP 3: Wait additional time for cleanup to complete
+            console.log('⏳ Waiting for cleanup to complete...');
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            // STEP 4: Initialize bot with polling
+            this.bot = new TelegramBot(this.token, { 
+                polling: {
+                    interval: 2000,  // Check every 2 seconds
+                    autoStart: false // Don't start immediately
+                }
+            });
+            
+            // STEP 5: Start polling manually after additional delay
+            setTimeout(() => {
+                console.log('🔄 Starting polling...');
+                this.bot.startPolling();
+            }, 2000);
             
             // Crear servidor HTTP para health checks de Render
             const express = require('express');

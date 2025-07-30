@@ -14,12 +14,13 @@ class SingleInstanceLock {
                 const lockData = fs.readFileSync(this.lockFile, 'utf8');
                 const lockInfo = JSON.parse(lockData);
                 
-                // Check if lock is stale (older than 5 minutes)
+                // Check if lock is stale (older than 2 minutes for faster recovery)
                 const lockAge = Date.now() - lockInfo.timestamp;
-                if (lockAge < 5 * 60 * 1000) {
+                if (lockAge < 2 * 60 * 1000) {
                     console.error(`❌ Another instance is running (PID: ${lockInfo.pid})`);
                     console.error(`Lock age: ${Math.round(lockAge / 1000)} seconds`);
-                    return false;
+                    console.error('🔥 FORCING CLEANUP OF STALE LOCK...');
+                    // Force cleanup anyway - we need to be aggressive
                 }
                 
                 console.log('🔓 Removing stale lock file');
