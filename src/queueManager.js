@@ -20,10 +20,23 @@ class QueueManager {
     }
 
     // Check if reservation is for next week (the lottery target)
+    // "Next week" means the work week that starts after the next Friday 5PM reset
     isNextWeekReservation(targetDate) {
         const now = moment().tz('America/Montevideo');
-        const nextWeekStart = now.clone().add(1, 'week').day(1); // Next Monday
-        const nextWeekEnd = now.clone().add(1, 'week').day(5); // Next Friday
+        
+        // Find the next Friday 5PM reset point
+        let nextReset;
+        if (now.day() === 5 && now.hour() < 17) {
+            // Today is Friday before 5PM - next reset is today at 5PM
+            nextReset = now.clone().hour(17).minute(0).second(0);
+        } else {
+            // Next reset is next Friday at 5PM
+            nextReset = now.clone().day(5 + 7).hour(17).minute(0).second(0);
+        }
+        
+        // "Next week" is Monday to Friday AFTER the next reset
+        const nextWeekStart = nextReset.clone().add(3, 'days').day(1); // Monday after reset Friday
+        const nextWeekEnd = nextReset.clone().add(1, 'week').day(5); // Friday after reset Friday
         
         return targetDate.isBetween(nextWeekStart, nextWeekEnd, 'day', '[]');
     }
@@ -238,14 +251,92 @@ class QueueManager {
         console.log('🧹 Todas las colas han sido limpiadas');
     }
 
+    // Check if we're after Friday 5PM reset but before next Friday 5PM
+    isNextWeekBookingAllowed() {
+        const now = moment().tz('America/Montevideo');
+        
+        // Find when the current booking period started (last Friday 5PM)
+        let lastReset;
+        if (now.day() === 5 && now.hour() >= 17) {
+            // Today is Friday after 5PM - reset happened today
+            lastReset = now.clone().hour(17).minute(0).second(0);
+        } else {
+            // Last reset was previous Friday
+            lastReset = now.clone().day(5 - 7).hour(17).minute(0).second(0);
+        }
+        
+        // Find next Friday 5PM (end of booking period)
+        let nextReset = now.clone().day(5 + 7).hour(17).minute(0).second(0);
+        if (now.day() === 5 && now.hour() < 17) {
+            nextReset = now.clone().hour(17).minute(0).second(0);
+        }
+        
+        // We're in the booking period if we're after last reset and before next reset
+        return now.isAfter(lastReset);
+    }
+
     // Handle reservation - main entry point called by webhook bot
     async handleReservation(userId, user, targetDate) {
-        // Check if this is a next-week reservation during queue period (Friday 17:00-17:15)
-        if (this.isNextWeekReservation(targetDate) && this.isInQueuePeriod()) {
-            // Add to lottery queue
-            return await this.addToQueue(userId, user, targetDate, userId); // Use userId as chatId fallback
+        const now = moment().tz('America/Montevideo');
+        
+        // Check if trying to reserve for a past date
+        if (targetDate.isBefore(now, 'day')) {
+            return {
+                success: false,
+                message: `No puedes hacer reservas para fechas pasadas. La fecha ${targetDate.format('dddd DD/MM')} ya ha pasado.`
+            };
+        }
+        
+        // Check if trying to reserve for weekend (Saturday=6, Sunday=0)
+        if (targetDate.day() === 0 || targetDate.day() === 6) {
+            return {
+                success: false,
+                message: `No se pueden hacer reservas para fines de semana. Solo días laborables (lunes a viernes).`
+            };
+        }
+        
+        // Check if this is a next-week reservation
+        if (this.isNextWeekReservation(targetDate)) {
+            // Check if we're in the lottery period (Friday 17:00-17:15)
+            if (this.isInQueuePeriod()) {
+                // Add to lottery queue
+                return await this.addToQueue(userId, user, targetDate, userId); // Use userId as chatId fallback
+            } 
+            // Check if we're after Friday 17:15 (normal booking period)
+            else if (this.isNextWeekBookingAllowed()) {
+                // Regular booking for next week after lottery period
+                if (!this.parkingManager) {
+                    const ParkingManager = require('./parkingManager');
+                    this.parkingManager = new ParkingManager(this.db);
+                }
+                
+                const result = await this.parkingManager.reserveSpot(userId, user, targetDate);
+                
+                if (result.success) {
+                    return {
+                        success: true,
+                        spotNumber: result.spotNumber
+                    };
+                } else if (result.waitlist) {
+                    return {
+                        success: false,
+                        waitlist: true
+                    };
+                } else {
+                    return {
+                        success: false,
+                        message: result.message
+                    };
+                }
+            } else {
+                // Before Friday 5PM - no next week bookings allowed
+                return {
+                    success: false,
+                    message: `Las reservas para la próxima semana estarán disponibles después del viernes 17:00. Durante 17:00-17:15 habrá un período de lotería, después será reserva normal.`
+                };
+            }
         } else {
-            // Regular immediate reservation using ParkingManager
+            // Regular immediate reservation for current week using ParkingManager
             if (!this.parkingManager) {
                 // Fallback: create ParkingManager if not provided (should not happen in production)
                 const ParkingManager = require('./parkingManager');

@@ -461,40 +461,49 @@ Si no hay espacios, te ofreceremos lista de espera automáticamente.
     }
     
     setupAutomaticCleanup() {
-        const scheduleNextCleanup = () => {
+        const scheduleNextFridayReset = () => {
             const now = moment().tz('America/Montevideo');
             
-            // Schedule for next day at 00:30 (30 minutes after midnight)
-            const nextCleanup = now.clone().add(1, 'day').hour(0).minute(30).second(0);
-            const timeUntilCleanup = nextCleanup.diff(now);
+            // Calculate next Friday at 17:00
+            let nextFriday = now.clone();
             
-            console.log(`🧹 Next automatic cleanup scheduled for: ${nextCleanup.format('dddd DD/MM/YYYY HH:mm')}`);
+            // If today is Friday and we haven't passed 17:00 yet
+            if (now.day() === 5 && now.hour() < 17) {
+                nextFriday = now.clone().hour(17).minute(0).second(0);
+            } else {
+                // Go to next Friday
+                nextFriday = now.clone().day(5 + 7).hour(17).minute(0).second(0); // Next Friday
+            }
             
-            this.cleanupTimeout = setTimeout(async () => {
+            const timeUntilReset = nextFriday.diff(now);
+            
+            console.log(`🔄 Next Friday 5PM reset scheduled for: ${nextFriday.format('dddd DD/MM/YYYY HH:mm')}`);
+            
+            this.fridayResetTimeout = setTimeout(async () => {
                 try {
-                    console.log('🧹 Running automatic cleanup of expired reservations...');
-                    await this.db.cleanupExpiredReservations();
+                    console.log('🔄 Running Friday 5PM reset...');
+                    const result = await this.db.resetCurrentWeekReservations();
                     
                     // Send notification to supervisor if configured
                     if (this.supervisorId) {
                         try {
                             await this.bot.sendMessage(this.supervisorId, 
-                                `🧹 Limpieza automática completada: eliminadas reservas y listas de espera de fechas pasadas.`);
+                                `🔄 Reset automático de viernes 17:00 completado: ${result.reservationsCleared} reservas y ${result.waitlistCleared} listas de espera eliminadas.`);
                         } catch (error) {
-                            console.error('Error sending cleanup notification to supervisor:', error);
+                            console.error('Error sending Friday reset notification to supervisor:', error);
                         }
                     }
                 } catch (error) {
-                    console.error('❌ Error during automatic cleanup:', error);
+                    console.error('❌ Error during Friday reset:', error);
                 }
                 
-                // Schedule next cleanup
-                scheduleNextCleanup();
-            }, timeUntilCleanup);
+                // Schedule next Friday reset
+                scheduleNextFridayReset();
+            }, timeUntilReset);
         };
         
-        // Start the cleanup scheduler
-        scheduleNextCleanup();
+        // Only start Friday reset scheduler - no daily cleanup
+        scheduleNextFridayReset();
     }
     
     setupGracefulShutdown() {
@@ -502,10 +511,10 @@ Si no hay espacios, te ofreceremos lista de espera automáticamente.
             console.log(`🛑 ${signal} received. Shutting down gracefully...`);
             
             try {
-                // Clear cleanup timeout
-                if (this.cleanupTimeout) {
-                    clearTimeout(this.cleanupTimeout);
-                    console.log('✅ Cleanup scheduler stopped');
+                // Clear Friday reset timeout
+                if (this.fridayResetTimeout) {
+                    clearTimeout(this.fridayResetTimeout);
+                    console.log('✅ Friday reset scheduler stopped');
                 }
                 
                 // Stop server

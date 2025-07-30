@@ -62,7 +62,8 @@ class TestBot {
                 }
             } else if (intent.type === 'STATUS') {
                 const status = await this.parkingManager.getWeekStatus();
-                await this.bot.sendMessage(chatId, 'Estado de la semana...');
+                const formattedStatus = this.parkingManager.formatWeekStatus(status);
+                await this.bot.sendMessage(chatId, formattedStatus);
             }
         });
 

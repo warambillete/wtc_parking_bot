@@ -370,6 +370,50 @@ class Database {
             });
         });
     }
+
+    async resetCurrentWeekReservations() {
+        const moment = require('moment-timezone');
+        const now = moment().tz('America/Montevideo');
+        
+        // Calculate current work week (Monday to Friday based on the Friday reset cycle)
+        const weekStart = now.clone().day(1); // Monday of current week
+        const weekEnd = now.clone().day(5);   // Friday of current week
+        
+        return new Promise((resolve, reject) => {
+            this.db.serialize(() => {
+                // Clear all reservations for current work week (Monday-Friday)
+                this.db.run(
+                    'DELETE FROM reservations WHERE date >= ? AND date <= ?', 
+                    [weekStart.format('YYYY-MM-DD'), weekEnd.format('YYYY-MM-DD')], 
+                    function(err) {
+                        if (err) {
+                            console.error('Error clearing current week reservations:', err);
+                            reject(err);
+                            return;
+                        }
+                        
+                        const reservationsCleared = this.changes;
+                        
+                        // Clear all waitlist entries for current work week
+                        this.db.run(
+                            'DELETE FROM waitlist WHERE date >= ? AND date <= ?', 
+                            [weekStart.format('YYYY-MM-DD'), weekEnd.format('YYYY-MM-DD')], 
+                            function(err) {
+                                if (err) {
+                                    console.error('Error clearing current week waitlist:', err);
+                                    reject(err);
+                                } else {
+                                    const waitlistCleared = this.changes;
+                                    console.log(`🔄 Friday 5PM Reset: Cleared ${reservationsCleared} reservations and ${waitlistCleared} waitlist entries for week ${weekStart.format('DD/MM')} - ${weekEnd.format('DD/MM')}`);
+                                    resolve({ reservationsCleared, waitlistCleared });
+                                }
+                            }
+                        );
+                    }
+                );
+            });
+        });
+    }
     
     async getSystemStats() {
         return new Promise((resolve, reject) => {
