@@ -137,8 +137,9 @@ class WTCParkBotWebhook {
         console.log(`💬 Message from ${msg.from?.first_name} (${userId}): ${msg.text}`);
         
         try {
-            // Handle supervisor commands
-            if (userId.toString() === this.supervisorId && text.startsWith('/')) {
+            
+            // Handle supervisor commands (use original text for commands)
+            if (userId.toString() === this.supervisorId && msg.text.trim().startsWith('/')) {
                 await this.handleSupervisorCommand(msg);
                 return;
             }
@@ -174,6 +175,10 @@ class WTCParkBotWebhook {
                     
                 case 'HELP':
                     await this.handleHelp(msg);
+                    break;
+                    
+                case 'FIXED_LIST':
+                    await this.handleFixedList(msg);
                     break;
                     
                 case 'FIXED_RELEASE':
@@ -236,34 +241,20 @@ class WTCParkBotWebhook {
             await this.bot.sendMessage(chatId, '🗑️ Todas las reservas han sido eliminadas');
         }
         else if (text.startsWith('/setfixed')) {
-            // Format: /setfixed 8033:userId:firstName,8034:userId2:firstName2
+            // Format: /setfixed 222,4122,4424
             const fixedStr = text.replace('/setfixed', '').trim();
             if (!fixedStr) {
                 await this.bot.sendMessage(chatId, 
-                    '❌ Formato: /setfixed 8033:123456:Juan,8034:234567:María');
+                    '❌ Formato: /setfixed 222,4122,4424');
                 return;
             }
             
-            const fixedSpots = [];
-            const spotDefinitions = fixedStr.split(',');
+            const spotNumbers = fixedStr.split(',').map(n => n.trim()).filter(n => n.length > 0);
             
-            for (const spotDef of spotDefinitions) {
-                const parts = spotDef.trim().split(':');
-                if (parts.length >= 3) {
-                    fixedSpots.push({
-                        number: parts[0],
-                        userId: parts[1],
-                        username: parts[3] || '',
-                        firstName: parts[2],
-                        lastName: parts[4] || ''
-                    });
-                }
-            }
-            
-            if (fixedSpots.length > 0) {
-                await this.db.setFixedSpots(fixedSpots);
+            if (spotNumbers.length > 0) {
+                await this.db.setFixedSpotNumbers(spotNumbers);
                 await this.bot.sendMessage(chatId, 
-                    `✅ Espacios fijos configurados:\n${fixedSpots.map(s => `• ${s.number} - ${s.firstName}`).join('\n')}`);
+                    `✅ Espacios fijos configurados:\n${spotNumbers.map(s => `• ${s}`).join('\n')}`);
             } else {
                 await this.bot.sendMessage(chatId, '❌ No se pudo procesar ningún espacio fijo');
             }
@@ -273,7 +264,7 @@ class WTCParkBotWebhook {
 
 📋 *Configuración:*
 • \`/setparking 1,2,3\` - Configurar espacios flex
-• \`/setfixed 8033:userId:Juan,8034:userId2:María\` - Configurar espacios fijos
+• \`/setfixed 222,4122,4424\` - Configurar espacios fijos
 
 📊 *Información:*
 • \`/stats\` - Ver estadísticas del sistema
@@ -283,11 +274,11 @@ class WTCParkBotWebhook {
 • \`/clear\` - Limpiar todas las reservas
 
 ℹ️ *Formato espacios fijos:*
-\`/setfixed NUMERO:USER_ID:NOMBRE\`
-Ejemplo: \`/setfixed 8033:123456789:Juan Carlos\`
+\`/setfixed NUMERO1,NUMERO2,NUMERO3\`
+Ejemplo: \`/setfixed 222,4122,4424\`
 
 💡 *Uso:*
-Para obtener el USER_ID de alguien, diles que escriban cualquier mensaje y verás su ID en los logs del servidor.
+Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
             `;
             await this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
         }
@@ -481,41 +472,53 @@ Para obtener el USER_ID de alguien, diles que escriban cualquier mensaje y verá
     }
     
     async handleHelp(msg) {
-        const helpText = `
-🚗 *WTC Parking Bot - Ayuda*
-
-*Comandos disponibles:*
+        const helpText = `🚗 *WTC Parking Bot*
 
 📅 *Reservar:*
-• "voy el lunes" - Reservar un día
-• "reservo lunes y miércoles" - Múltiples días
+• "voy el lunes" - Un día
+• "voy lunes y miércoles" - Múltiples días
 • "voy toda la semana" - Lunes a viernes
 
 🔓 *Liberar:*
-• "libero el martes" - Liberar un día
-• "no voy el jueves" - Liberar un día
+• "libero el martes" / "no voy el jueves"
 
-🔐 *Espacios Fijos (propietarios):*
-• "libero el 8033 para martes y miércoles"
+🔐 *Espacios Fijos:*
+• "libero el 8033 para martes"
 • "libero el 8033 toda la semana"
 • "libero el 8033 por 2 semanas"
-• "quitar el 8033" - Quitar del pool
-• "quito el 8033" - Quitar del pool
+• "quitar el 8033" - Remover del pool
 
 📊 *Consultar:*
-• "estado" - Ver disponibilidad semanal
+• "estado" - Ver disponibilidad
 • "mis reservas" - Ver tus reservas
+• "ver fijos" - Ver espacios fijos
 
-⏰ *Fechas:*
-• "mañana", "hoy"
-• Días: lunes, martes, miércoles, jueves, viernes
-• "la próxima semana voy el..."
-
-🎯 *Lista de espera:*
-Si no hay espacios, te ofreceremos lista de espera automáticamente.
+⏰ Días: lunes-viernes, "mañana", "hoy"
+🎯 Lista de espera automática si no hay espacios
         `;
         
         await this.bot.sendMessage(msg.chat.id, helpText, { parse_mode: 'Markdown' });
+    }
+    
+    async handleFixedList(msg) {
+        try {
+            const fixedSpots = await this.db.getFixedSpots();
+            
+            if (fixedSpots.length === 0) {
+                await this.bot.sendMessage(msg.chat.id, '📋 No hay espacios fijos configurados.');
+                return;
+            }
+            
+            const spotNumbers = fixedSpots.map(spot => spot.spot_number).join(', ');
+            await this.bot.sendMessage(msg.chat.id, 
+                `🔐 *Espacios Fijos:*\n\n${spotNumbers}\n\n💡 Puedes liberar cualquiera de estos diciendo "libero el XXXX para martes"`, 
+                { parse_mode: 'Markdown' }
+            );
+            
+        } catch (error) {
+            console.error('Error getting fixed spots list:', error);
+            await this.bot.sendMessage(msg.chat.id, '❌ Error al obtener la lista de espacios fijos.');
+        }
     }
     
     async handleUnknownCommand(msg) {
@@ -524,22 +527,15 @@ Si no hay espacios, te ofreceremos lista de espera automáticamente.
     }
     
     async handleFixedRelease(msg, intent) {
-        const userId = msg.from.id;
         const chatId = msg.chat.id;
         
         try {
-            // Check if user owns this fixed spot
-            const fixedSpot = await this.db.getFixedSpot(intent.spotNumber);
+            // Check if the spot number is in the fixed spots list
+            const isFixed = await this.db.isFixedSpot(intent.spotNumber);
             
-            if (!fixedSpot) {
+            if (!isFixed) {
                 await this.bot.sendMessage(chatId, 
                     `❌ El espacio ${intent.spotNumber} no es un espacio fijo.`);
-                return;
-            }
-            
-            if (fixedSpot.owner_user_id !== userId.toString()) {
-                await this.bot.sendMessage(chatId, 
-                    `❌ No eres el dueño del espacio ${intent.spotNumber}.`);
                 return;
             }
             
@@ -547,7 +543,7 @@ Si no hay espacios, te ofreceremos lista de espera automáticamente.
             const startDateStr = intent.startDate.format('YYYY-MM-DD');
             const endDateStr = intent.endDate.format('YYYY-MM-DD');
             
-            await this.db.releaseFixedSpot(intent.spotNumber, userId.toString(), startDateStr, endDateStr);
+            await this.db.releaseFixedSpot(intent.spotNumber, startDateStr, endDateStr);
             
             await this.bot.sendMessage(chatId, 
                 `✅ Espacio ${intent.spotNumber} liberado desde ${intent.startDate.format('dddd DD/MM')} hasta ${intent.endDate.format('dddd DD/MM')}`);
@@ -559,27 +555,20 @@ Si no hay espacios, te ofreceremos lista de espera automáticamente.
     }
     
     async handleFixedRemoval(msg, intent) {
-        const userId = msg.from.id;
         const chatId = msg.chat.id;
         
         try {
-            // Check if user owns this fixed spot
-            const fixedSpot = await this.db.getFixedSpot(intent.spotNumber);
+            // Check if the spot number is in the fixed spots list
+            const isFixed = await this.db.isFixedSpot(intent.spotNumber);
             
-            if (!fixedSpot) {
+            if (!isFixed) {
                 await this.bot.sendMessage(chatId, 
                     `❌ El espacio ${intent.spotNumber} no es un espacio fijo.`);
                 return;
             }
             
-            if (fixedSpot.owner_user_id !== userId.toString()) {
-                await this.bot.sendMessage(chatId, 
-                    `❌ No eres el dueño del espacio ${intent.spotNumber}.`);
-                return;
-            }
-            
             // Remove the spot from the pool
-            const removed = await this.db.removeFixedSpotRelease(intent.spotNumber, userId.toString());
+            const removed = await this.db.removeFixedSpotRelease(intent.spotNumber);
             
             if (removed > 0) {
                 await this.bot.sendMessage(chatId, 

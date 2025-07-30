@@ -79,15 +79,11 @@ class Database {
                 )
             `);
             
-            // Tabla de espacios fijos
+            // Tabla de espacios fijos (solo números)
             this.db.run(`
                 CREATE TABLE IF NOT EXISTS fixed_spots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     spot_number TEXT UNIQUE NOT NULL,
-                    owner_user_id TEXT NOT NULL,
-                    owner_username TEXT,
-                    owner_first_name TEXT,
-                    owner_last_name TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             `);
@@ -97,7 +93,6 @@ class Database {
                 CREATE TABLE IF NOT EXISTS fixed_spot_releases (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     spot_number TEXT NOT NULL,
-                    owner_user_id TEXT NOT NULL,
                     start_date TEXT NOT NULL,
                     end_date TEXT NOT NULL,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -564,7 +559,7 @@ class Database {
     }
 
     // Fixed spots methods
-    async setFixedSpots(spots) {
+    async setFixedSpotNumbers(spotNumbers) {
         return new Promise((resolve, reject) => {
             this.db.serialize(() => {
                 // Clear existing fixed spots
@@ -574,10 +569,10 @@ class Database {
                         return;
                     }
                     
-                    const stmt = this.db.prepare('INSERT INTO fixed_spots (spot_number, owner_user_id, owner_username, owner_first_name, owner_last_name) VALUES (?, ?, ?, ?, ?)');
+                    const stmt = this.db.prepare('INSERT INTO fixed_spots (spot_number) VALUES (?)');
                     
-                    spots.forEach(spot => {
-                        stmt.run(spot.number, spot.userId, spot.username, spot.firstName, spot.lastName);
+                    spotNumbers.forEach(number => {
+                        stmt.run(number);
                     });
                     
                     stmt.finalize(() => {
@@ -585,6 +580,32 @@ class Database {
                     });
                 });
             });
+        });
+    }
+    
+    async isFixedSpot(spotNumber) {
+        return new Promise((resolve, reject) => {
+            this.db.get(
+                'SELECT spot_number FROM fixed_spots WHERE spot_number = ?',
+                [spotNumber],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(!!row);
+                }
+            );
+        });
+    }
+    
+    async getFixedSpots() {
+        return new Promise((resolve, reject) => {
+            this.db.all(
+                'SELECT spot_number FROM fixed_spots ORDER BY spot_number',
+                [],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                }
+            );
         });
     }
     
@@ -601,12 +622,12 @@ class Database {
         });
     }
     
-    async releaseFixedSpot(spotNumber, ownerUserId, startDate, endDate) {
+    async releaseFixedSpot(spotNumber, startDate, endDate) {
         return new Promise((resolve, reject) => {
             this.db.run(
-                `INSERT INTO fixed_spot_releases (spot_number, owner_user_id, start_date, end_date) 
-                 VALUES (?, ?, ?, ?)`,
-                [spotNumber, ownerUserId, startDate, endDate],
+                `INSERT INTO fixed_spot_releases (spot_number, start_date, end_date) 
+                 VALUES (?, ?, ?)`,
+                [spotNumber, startDate, endDate],
                 function(err) {
                     if (err) reject(err);
                     else resolve(this.lastID);
@@ -615,13 +636,13 @@ class Database {
         });
     }
     
-    async removeFixedSpotRelease(spotNumber, ownerUserId) {
+    async removeFixedSpotRelease(spotNumber) {
         const moment = require('moment-timezone');
         return new Promise((resolve, reject) => {
             const now = moment().tz('America/Montevideo').format('YYYY-MM-DD');
             this.db.run(
-                'DELETE FROM fixed_spot_releases WHERE spot_number = ? AND owner_user_id = ? AND end_date >= ?',
-                [spotNumber, ownerUserId, now],
+                'DELETE FROM fixed_spot_releases WHERE spot_number = ? AND end_date >= ?',
+                [spotNumber, now],
                 function(err) {
                     if (err) reject(err);
                     else resolve(this.changes);

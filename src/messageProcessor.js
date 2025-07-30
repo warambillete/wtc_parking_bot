@@ -41,6 +41,11 @@ class MessageProcessor {
             /\b(comandos)\b/i
         ];
         
+        this.fixedListPatterns = [
+            /\b(ver\s+fijos|espacios\s+fijos|lista\s+fijos)\b/i,
+            /\b(mostrar\s+fijos|cu[aá]les\s+son\s+los\s+fijos)\b/i
+        ];
+        
         // Fixed spot release patterns
         this.fixedReleasePatterns = [
             /\b(libero|liberar)\s+(el\s+)?(\d{4})\s+(para|por)\s+(el\s+)?(lunes|martes|mi[eé]rcoles|jueves|viernes)/i,
@@ -81,6 +86,11 @@ class MessageProcessor {
         // Verificar si es solicitud de ayuda
         if (this.helpPatterns.some(pattern => pattern.test(text))) {
             return { type: 'HELP' };
+        }
+        
+        // Verificar si es solicitud de ver espacios fijos
+        if (this.fixedListPatterns.some(pattern => pattern.test(text))) {
+            return { type: 'FIXED_LIST' };
         }
         
         // Check for fixed spot removal (quitar el 8033)
