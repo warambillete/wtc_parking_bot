@@ -176,6 +176,14 @@ class WTCParkBotWebhook {
                     await this.handleHelp(msg);
                     break;
                     
+                case 'FIXED_RELEASE':
+                    await this.handleFixedRelease(msg, intent);
+                    break;
+                    
+                case 'FIXED_REMOVAL':
+                    await this.handleFixedRemoval(msg, intent);
+                    break;
+                    
                 default:
                     await this.handleUnknownCommand(msg);
             }
@@ -207,6 +215,39 @@ class WTCParkBotWebhook {
         else if (text === '/clear') {
             await this.parkingManager.clearAllReservations();
             await this.bot.sendMessage(chatId, '🗑️ Todas las reservas han sido eliminadas');
+        }
+        else if (text.startsWith('/setfixed')) {
+            // Format: /setfixed 8033:userId:firstName,8034:userId2:firstName2
+            const fixedStr = text.replace('/setfixed', '').trim();
+            if (!fixedStr) {
+                await this.bot.sendMessage(chatId, 
+                    '❌ Formato: /setfixed 8033:123456:Juan,8034:234567:María');
+                return;
+            }
+            
+            const fixedSpots = [];
+            const spotDefinitions = fixedStr.split(',');
+            
+            for (const spotDef of spotDefinitions) {
+                const parts = spotDef.trim().split(':');
+                if (parts.length >= 3) {
+                    fixedSpots.push({
+                        number: parts[0],
+                        userId: parts[1],
+                        username: parts[3] || '',
+                        firstName: parts[2],
+                        lastName: parts[4] || ''
+                    });
+                }
+            }
+            
+            if (fixedSpots.length > 0) {
+                await this.db.setFixedSpots(fixedSpots);
+                await this.bot.sendMessage(chatId, 
+                    `✅ Espacios fijos configurados:\n${fixedSpots.map(s => `• ${s.number} - ${s.firstName}`).join('\n')}`);
+            } else {
+                await this.bot.sendMessage(chatId, '❌ No se pudo procesar ningún espacio fijo');
+            }
         }
     }
     
@@ -412,6 +453,13 @@ class WTCParkBotWebhook {
 • "libero el martes" - Liberar un día
 • "no voy el jueves" - Liberar un día
 
+🔐 *Espacios Fijos (propietarios):*
+• "libero el 8033 para martes y miércoles"
+• "libero el 8033 toda la semana"
+• "libero el 8033 por 2 semanas"
+• "quitar el 8033" - Quitar del pool
+• "quito el 8033" - Quitar del pool
+
 📊 *Consultar:*
 • "estado" - Ver disponibilidad semanal
 • "mis reservas" - Ver tus reservas
@@ -431,6 +479,78 @@ Si no hay espacios, te ofreceremos lista de espera automáticamente.
     async handleUnknownCommand(msg) {
         await this.bot.sendMessage(msg.chat.id, 
             '🤔 No entiendo ese comando. Escribe "ayuda" para ver los comandos disponibles.');
+    }
+    
+    async handleFixedRelease(msg, intent) {
+        const userId = msg.from.id;
+        const chatId = msg.chat.id;
+        
+        try {
+            // Check if user owns this fixed spot
+            const fixedSpot = await this.db.getFixedSpot(intent.spotNumber);
+            
+            if (!fixedSpot) {
+                await this.bot.sendMessage(chatId, 
+                    `❌ El espacio ${intent.spotNumber} no es un espacio fijo.`);
+                return;
+            }
+            
+            if (fixedSpot.owner_user_id !== userId.toString()) {
+                await this.bot.sendMessage(chatId, 
+                    `❌ No eres el dueño del espacio ${intent.spotNumber}.`);
+                return;
+            }
+            
+            // Release the spot for the specified period
+            const startDateStr = intent.startDate.format('YYYY-MM-DD');
+            const endDateStr = intent.endDate.format('YYYY-MM-DD');
+            
+            await this.db.releaseFixedSpot(intent.spotNumber, userId.toString(), startDateStr, endDateStr);
+            
+            await this.bot.sendMessage(chatId, 
+                `✅ Espacio ${intent.spotNumber} liberado desde ${intent.startDate.format('dddd DD/MM')} hasta ${intent.endDate.format('dddd DD/MM')}`);
+            
+        } catch (error) {
+            console.error('Error releasing fixed spot:', error);
+            await this.bot.sendMessage(chatId, '❌ Error al liberar el espacio fijo.');
+        }
+    }
+    
+    async handleFixedRemoval(msg, intent) {
+        const userId = msg.from.id;
+        const chatId = msg.chat.id;
+        
+        try {
+            // Check if user owns this fixed spot
+            const fixedSpot = await this.db.getFixedSpot(intent.spotNumber);
+            
+            if (!fixedSpot) {
+                await this.bot.sendMessage(chatId, 
+                    `❌ El espacio ${intent.spotNumber} no es un espacio fijo.`);
+                return;
+            }
+            
+            if (fixedSpot.owner_user_id !== userId.toString()) {
+                await this.bot.sendMessage(chatId, 
+                    `❌ No eres el dueño del espacio ${intent.spotNumber}.`);
+                return;
+            }
+            
+            // Remove the spot from the pool
+            const removed = await this.db.removeFixedSpotRelease(intent.spotNumber, userId.toString());
+            
+            if (removed > 0) {
+                await this.bot.sendMessage(chatId, 
+                    `✅ Espacio ${intent.spotNumber} removido del pool de reservas.`);
+            } else {
+                await this.bot.sendMessage(chatId, 
+                    `⚠️ El espacio ${intent.spotNumber} no estaba liberado.`);
+            }
+            
+        } catch (error) {
+            console.error('Error removing fixed spot from pool:', error);
+            await this.bot.sendMessage(chatId, '❌ Error al remover el espacio fijo del pool.');
+        }
     }
     
     async handleCallbackQuery(query) {

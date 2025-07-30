@@ -41,6 +41,20 @@ class MessageProcessor {
             /\b(comandos)\b/i
         ];
         
+        // Fixed spot release patterns
+        this.fixedReleasePatterns = [
+            /\b(libero|liberar)\s+(el\s+)?(\d{4})\s+(para|por)\s+(el\s+)?(lunes|martes|mi[eé]rcoles|jueves|viernes)/i,
+            /\b(libero|liberar)\s+(el\s+)?(\d{4})\s+(toda\s+la\s+semana|por\s+toda\s+la\s+semana)/i,
+            /\b(libero|liberar)\s+(el\s+)?(\d{4})\s+(por\s+)?(\d+)\s+semanas?/i,
+            /\b(libero|liberar)\s+(el\s+)?(\d{4})\s+(para|por)\s+.*?(lunes|martes|mi[eé]rcoles|jueves|viernes).*?(y|,).*?(lunes|martes|mi[eé]rcoles|jueves|viernes)/i
+        ];
+        
+        // Fixed spot removal patterns
+        this.fixedRemovalPatterns = [
+            /\b(quitar|quito|sacar|saco)\s+(el\s+)?(\d{4})\b/i,
+            /\b(quiero|necesito)\s+(el\s+)?(\d{4})\s+(de\s+vuelta|devuelta)\b/i
+        ];
+        
         this.dayMap = {
             'lunes': 1,
             'martes': 2,
@@ -67,6 +81,27 @@ class MessageProcessor {
         // Verificar si es solicitud de ayuda
         if (this.helpPatterns.some(pattern => pattern.test(text))) {
             return { type: 'HELP' };
+        }
+        
+        // Check for fixed spot removal (quitar el 8033)
+        for (const pattern of this.fixedRemovalPatterns) {
+            const match = text.match(pattern);
+            if (match) {
+                const spotNumber = match[3] || match[2]; // Capture the spot number
+                return { type: 'FIXED_REMOVAL', spotNumber };
+            }
+        }
+        
+        // Check for fixed spot release (libero el 8033...)
+        for (const pattern of this.fixedReleasePatterns) {
+            const match = text.match(pattern);
+            if (match) {
+                const spotNumber = match[3]; // The spot number
+                const releaseInfo = this.parseFixedRelease(text, match, spotNumber);
+                if (releaseInfo) {
+                    return releaseInfo;
+                }
+            }
         }
         
         // Verificar si es liberación FIRST (has priority over reservations)
@@ -227,6 +262,53 @@ class MessageProcessor {
         });
         
         return days;
+    }
+    
+    // Parse fixed spot release information
+    parseFixedRelease(text, match, spotNumber) {
+        const now = moment().tz('America/Montevideo');
+        
+        // Check for "toda la semana" (whole week)
+        if (/toda\s+la\s+semana|por\s+toda\s+la\s+semana/i.test(text)) {
+            const dates = this.getWholeWeek(text);
+            return { 
+                type: 'FIXED_RELEASE', 
+                spotNumber, 
+                startDate: dates[0], 
+                endDate: dates[dates.length - 1] 
+            };
+        }
+        
+        // Check for "por X semanas" (for X weeks)
+        const weeksMatch = text.match(/por\s+(\d+)\s+semanas?/i);
+        if (weeksMatch) {
+            const weeks = parseInt(weeksMatch[1]);
+            const startDate = now.clone().day(1); // Start from Monday
+            if (startDate.isBefore(now, 'day')) {
+                startDate.add(1, 'week');
+            }
+            const endDate = startDate.clone().add(weeks, 'weeks').day(5); // End on Friday
+            
+            return { 
+                type: 'FIXED_RELEASE', 
+                spotNumber, 
+                startDate, 
+                endDate 
+            };
+        }
+        
+        // Check for specific day(s)
+        const days = this.processMultipleDays(text);
+        if (days.length > 0) {
+            return { 
+                type: 'FIXED_RELEASE', 
+                spotNumber, 
+                startDate: days[0], 
+                endDate: days[days.length - 1] 
+            };
+        }
+        
+        return null;
     }
 }
 

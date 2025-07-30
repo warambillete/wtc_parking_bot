@@ -79,11 +79,39 @@ class Database {
                 )
             `);
             
+            // Tabla de espacios fijos
+            this.db.run(`
+                CREATE TABLE IF NOT EXISTS fixed_spots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    spot_number TEXT UNIQUE NOT NULL,
+                    owner_user_id TEXT NOT NULL,
+                    owner_username TEXT,
+                    owner_first_name TEXT,
+                    owner_last_name TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
+            
+            // Tabla de liberaciones temporales de espacios fijos
+            this.db.run(`
+                CREATE TABLE IF NOT EXISTS fixed_spot_releases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    spot_number TEXT NOT NULL,
+                    owner_user_id TEXT NOT NULL,
+                    start_date TEXT NOT NULL,
+                    end_date TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (spot_number) REFERENCES fixed_spots(spot_number)
+                )
+            `);
+            
             // Índices para mejor rendimiento
             this.db.run(`CREATE INDEX IF NOT EXISTS idx_reservations_date ON reservations(date)`);
             this.db.run(`CREATE INDEX IF NOT EXISTS idx_reservations_user ON reservations(user_id)`);
             this.db.run(`CREATE INDEX IF NOT EXISTS idx_waitlist_date ON waitlist(date)`);
             this.db.run(`CREATE INDEX IF NOT EXISTS idx_waitlist_position ON waitlist(date, position)`);
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_fixed_releases_spot ON fixed_spot_releases(spot_number)`);
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_fixed_releases_dates ON fixed_spot_releases(start_date, end_date)`);
         });
         
         if (process.env.NODE_ENV !== 'test') {
@@ -187,39 +215,99 @@ class Database {
     }
     
     async getAvailableSpot(date) {
-        return new Promise((resolve, reject) => {
-            this.db.get(
-                `SELECT ps.number 
-                 FROM parking_spots ps 
-                 LEFT JOIN reservations r ON ps.number = r.spot_number AND r.date = ?
-                 WHERE ps.active = 1 AND r.id IS NULL 
-                 ORDER BY ps.number 
-                 LIMIT 1`,
-                [date],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
+        return new Promise(async (resolve, reject) => {
+            try {
+                // First check regular flex spots
+                const flexSpot = await new Promise((res, rej) => {
+                    this.db.get(
+                        `SELECT ps.number 
+                         FROM parking_spots ps 
+                         LEFT JOIN reservations r ON ps.number = r.spot_number AND r.date = ?
+                         WHERE ps.active = 1 AND r.id IS NULL 
+                         ORDER BY ps.number 
+                         LIMIT 1`,
+                        [date],
+                        (err, row) => err ? rej(err) : res(row)
+                    );
+                });
+                
+                if (flexSpot) {
+                    resolve(flexSpot);
+                    return;
                 }
-            );
+                
+                // If no flex spots available, check released fixed spots
+                const releasedSpots = await this.getReleasedFixedSpots(date);
+                
+                for (const released of releasedSpots) {
+                    const isReserved = await new Promise((res, rej) => {
+                        this.db.get(
+                            'SELECT id FROM reservations WHERE spot_number = ? AND date = ?',
+                            [released.spot_number, date],
+                            (err, row) => err ? rej(err) : res(row)
+                        );
+                    });
+                    
+                    if (!isReserved) {
+                        resolve({ number: released.spot_number });
+                        return;
+                    }
+                }
+                
+                // No spots available
+                resolve(null);
+            } catch (error) {
+                reject(error);
+            }
         });
     }
     
     async getDayStatus(date) {
-        return new Promise((resolve, reject) => {
-            this.db.all(
-                `SELECT ps.number as spot_number, 
-                        CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END as reserved,
-                        r.username, r.first_name, r.last_name
-                 FROM parking_spots ps 
-                 LEFT JOIN reservations r ON ps.number = r.spot_number AND r.date = ?
-                 WHERE ps.active = 1 
-                 ORDER BY ps.number`,
-                [date],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
+        return new Promise(async (resolve, reject) => {
+            try {
+                // Get regular flex spots
+                const flexSpots = await new Promise((res, rej) => {
+                    this.db.all(
+                        `SELECT ps.number as spot_number, 
+                                CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END as reserved,
+                                r.username, r.first_name, r.last_name
+                         FROM parking_spots ps 
+                         LEFT JOIN reservations r ON ps.number = r.spot_number AND r.date = ?
+                         WHERE ps.active = 1 
+                         ORDER BY ps.number`,
+                        [date],
+                        (err, rows) => err ? rej(err) : res(rows)
+                    );
+                });
+                
+                // Get temporarily released fixed spots
+                const releasedSpots = await this.getReleasedFixedSpots(date);
+                
+                // Add released fixed spots to the list
+                for (const released of releasedSpots) {
+                    const spotReservation = await new Promise((res, rej) => {
+                        this.db.get(
+                            `SELECT r.username, r.first_name, r.last_name
+                             FROM reservations r
+                             WHERE r.spot_number = ? AND r.date = ?`,
+                            [released.spot_number, date],
+                            (err, row) => err ? rej(err) : res(row)
+                        );
+                    });
+                    
+                    flexSpots.push({
+                        spot_number: released.spot_number,
+                        reserved: spotReservation ? 1 : 0,
+                        username: spotReservation?.username || null,
+                        first_name: spotReservation?.first_name || null,
+                        last_name: spotReservation?.last_name || null
+                    });
                 }
-            );
+                
+                resolve(flexSpots);
+            } catch (error) {
+                reject(error);
+            }
         });
     }
     
@@ -472,6 +560,87 @@ class Database {
                 if (err) reject(err);
                 else resolve(rows || []);
             });
+        });
+    }
+
+    // Fixed spots methods
+    async setFixedSpots(spots) {
+        return new Promise((resolve, reject) => {
+            this.db.serialize(() => {
+                // Clear existing fixed spots
+                this.db.run('DELETE FROM fixed_spots', (err) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    
+                    const stmt = this.db.prepare('INSERT INTO fixed_spots (spot_number, owner_user_id, owner_username, owner_first_name, owner_last_name) VALUES (?, ?, ?, ?, ?)');
+                    
+                    spots.forEach(spot => {
+                        stmt.run(spot.number, spot.userId, spot.username, spot.firstName, spot.lastName);
+                    });
+                    
+                    stmt.finalize(() => {
+                        resolve();
+                    });
+                });
+            });
+        });
+    }
+    
+    async getFixedSpot(spotNumber) {
+        return new Promise((resolve, reject) => {
+            this.db.get(
+                'SELECT * FROM fixed_spots WHERE spot_number = ?',
+                [spotNumber],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+    }
+    
+    async releaseFixedSpot(spotNumber, ownerUserId, startDate, endDate) {
+        return new Promise((resolve, reject) => {
+            this.db.run(
+                `INSERT INTO fixed_spot_releases (spot_number, owner_user_id, start_date, end_date) 
+                 VALUES (?, ?, ?, ?)`,
+                [spotNumber, ownerUserId, startDate, endDate],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve(this.lastID);
+                }
+            );
+        });
+    }
+    
+    async removeFixedSpotRelease(spotNumber, ownerUserId) {
+        const moment = require('moment-timezone');
+        return new Promise((resolve, reject) => {
+            const now = moment().tz('America/Montevideo').format('YYYY-MM-DD');
+            this.db.run(
+                'DELETE FROM fixed_spot_releases WHERE spot_number = ? AND owner_user_id = ? AND end_date >= ?',
+                [spotNumber, ownerUserId, now],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve(this.changes);
+                }
+            );
+        });
+    }
+    
+    async getReleasedFixedSpots(date) {
+        return new Promise((resolve, reject) => {
+            this.db.all(
+                `SELECT DISTINCT spot_number FROM fixed_spot_releases 
+                 WHERE ? BETWEEN start_date AND end_date`,
+                [date],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                }
+            );
         });
     }
     
