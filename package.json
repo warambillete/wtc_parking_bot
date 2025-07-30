@@ -2,10 +2,10 @@
   "name": "wtc-parking-bot",
   "version": "1.1.0",
   "description": "WTC ParkBot - Sistema de gestión de estacionamientos",
-  "main": "src/webhookBot.js",
+  "main": "src/bot.js",
   "scripts": {
-    "start": "node src/webhookBot.js",
-    "start:polling": "node src/bot.js",
+    "start": "node src/bot.js",
+    "start:polling": "node src/bot-polling-backup.js",
     "dev": "nodemon src/webhookBot.js",
     "test": "NODE_ENV=test jest --verbose",
     "test:watch": "NODE_ENV=test jest --watch",
