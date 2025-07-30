@@ -212,6 +212,25 @@ class WTCParkBotWebhook {
                 `• En lista de espera: ${stats.totalWaitlist}`
             );
         }
+        else if (text === '/version') {
+            const packageInfo = require('../../package.json');
+            const now = moment().tz('America/Montevideo');
+            const uptime = process.uptime();
+            const hours = Math.floor(uptime / 3600);
+            const minutes = Math.floor((uptime % 3600) / 60);
+            
+            await this.bot.sendMessage(chatId, 
+                `🔧 *WTC Parking Bot*\n\n` +
+                `📌 Versión: ${packageInfo.version}\n` +
+                `🚀 Modo: Webhook\n` +
+                `⏰ Hora actual: ${now.format('DD/MM/YYYY HH:mm:ss')}\n` +
+                `⏱️ Uptime: ${hours}h ${minutes}m\n` +
+                `🌐 Node: ${process.version}\n` +
+                `💾 DB: ${this.db.dbPath}\n` +
+                `🏷️ Ambiente: ${process.env.NODE_ENV || 'production'}`,
+                { parse_mode: 'Markdown' }
+            );
+        }
         else if (text === '/clear') {
             await this.parkingManager.clearAllReservations();
             await this.bot.sendMessage(chatId, '🗑️ Todas las reservas han sido eliminadas');
@@ -248,6 +267,29 @@ class WTCParkBotWebhook {
             } else {
                 await this.bot.sendMessage(chatId, '❌ No se pudo procesar ningún espacio fijo');
             }
+        }
+        else if (text === '/helpsuper') {
+            const helpText = `🔧 *Comandos de Administrador:*
+
+📋 *Configuración:*
+• \`/setparking 1,2,3\` - Configurar espacios flex
+• \`/setfixed 8033:userId:Juan,8034:userId2:María\` - Configurar espacios fijos
+
+📊 *Información:*
+• \`/stats\` - Ver estadísticas del sistema
+• \`/version\` - Ver versión y estado del bot
+
+🗑️ *Gestión:*
+• \`/clear\` - Limpiar todas las reservas
+
+ℹ️ *Formato espacios fijos:*
+\`/setfixed NUMERO:USER_ID:NOMBRE\`
+Ejemplo: \`/setfixed 8033:123456789:Juan Carlos\`
+
+💡 *Uso:*
+Para obtener el USER_ID de alguien, diles que escriban cualquier mensaje y verás su ID en los logs del servidor.
+            `;
+            await this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
         }
     }
     
