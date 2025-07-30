@@ -1,0 +1,14 @@
+FORCE COMPLETE REBUILD - WEBHOOK MODE ONLY
+
+This file forces Render to completely rebuild and use webhookBot.js instead of bot.js
+
+Timestamp: 2025-07-30 00:32:00
+Version: 1.1.0
+Mode: WEBHOOK ONLY - NO POLLING
+
+Expected behavior:
+- Use src/webhookBot.js as main entry point  
+- Set webhook instead of polling
+- Eliminate all 409 conflicts
+
+DO NOT DELETE THIS FILE - IT ENSURES PROPER DEPLOYMENT
