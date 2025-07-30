@@ -4,8 +4,9 @@
   "description": "WTC ParkBot - Sistema de gestión de estacionamientos",
   "main": "src/bot.js",
   "scripts": {
-    "start": "node src/bot.js",
-    "dev": "nodemon src/bot.js",
+    "start": "node src/webhookBot.js",
+    "start:polling": "node src/bot.js",
+    "dev": "nodemon src/webhookBot.js",
     "test": "NODE_ENV=test jest --verbose",
     "test:watch": "NODE_ENV=test jest --watch",
     "test:coverage": "NODE_ENV=test jest --coverage"
