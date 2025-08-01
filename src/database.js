@@ -451,24 +451,43 @@ class Database {
     // Métodos para lista de espera
     async addToWaitlist(userId, user, date) {
         return new Promise((resolve, reject) => {
-            // Primero obtener la siguiente posición
+            // Primero verificar si el usuario ya está en la lista de espera
             this.db.get(
-                'SELECT COALESCE(MAX(position), 0) + 1 as next_position FROM waitlist WHERE date = ?',
-                [date],
-                (err, result) => {
+                'SELECT id FROM waitlist WHERE user_id = ? AND date = ?',
+                [userId, date],
+                (err, existing) => {
                     if (err) {
                         reject(err);
                         return;
                     }
                     
-                    const position = result.next_position;
-                    this.db.run(
-                        `INSERT INTO waitlist (user_id, username, first_name, last_name, date, position) 
-                         VALUES (?, ?, ?, ?, ?, ?)`,
-                        [userId, user.username, user.first_name, user.last_name, date, position],
-                        function(err) {
-                            if (err) reject(err);
-                            else resolve(this.lastID);
+                    // Si ya está en la lista, retornar el ID existente
+                    if (existing) {
+                        console.log(`User ${userId} already in waitlist for ${date}`);
+                        resolve(existing.id);
+                        return;
+                    }
+                    
+                    // Si no está, obtener la siguiente posición y agregarlo
+                    this.db.get(
+                        'SELECT COALESCE(MAX(position), 0) + 1 as next_position FROM waitlist WHERE date = ?',
+                        [date],
+                        (err, result) => {
+                            if (err) {
+                                reject(err);
+                                return;
+                            }
+                            
+                            const position = result.next_position;
+                            this.db.run(
+                                `INSERT INTO waitlist (user_id, username, first_name, last_name, date, position) 
+                                 VALUES (?, ?, ?, ?, ?, ?)`,
+                                [userId, user.username, user.first_name, user.last_name, date, position],
+                                function(err) {
+                                    if (err) reject(err);
+                                    else resolve(this.lastID);
+                                }
+                            );
                         }
                     );
                 }

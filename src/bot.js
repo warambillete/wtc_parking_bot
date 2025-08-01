@@ -645,28 +645,42 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
     async handleCallbackQuery(query) {
         const data = query.data;
         
-        if (data.startsWith('waitlist_yes_')) {
-            const parts = data.split('_');
-            const userId = parseInt(parts[2]);
-            const dateStr = parts[3];
-            const date = moment(dateStr);
+        try {
+            if (data.startsWith('waitlist_yes_')) {
+                const parts = data.split('_');
+                const userId = parseInt(parts[2]);
+                const dateStr = parts[3];
+                const date = moment(dateStr);
+                
+                await this.parkingManager.addToWaitlist(userId, query.from, date);
+                
+                await this.bot.editMessageText(
+                    `📝 Añadido a lista de espera para ${date.format('dddd DD/MM')}. Te notificaré si se libera un espacio.`, {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            }
+            else if (data === 'waitlist_no') {
+                await this.bot.editMessageText('👍 Entendido. ¡Que tengas buen día!', {
+                    chat_id: query.message.chat.id,
+                    message_id: query.message.message_id
+                });
+            }
             
-            await this.parkingManager.addToWaitlist(userId, query.from, date);
+            await this.bot.answerCallbackQuery(query.id);
+        } catch (error) {
+            console.error('❌ Error handling callback query:', error);
             
-            await this.bot.editMessageText(
-                `📝 Añadido a lista de espera para ${date.format('dddd DD/MM')}. Te notificaré si se libera un espacio.`, {
-                chat_id: query.message.chat.id,
-                message_id: query.message.message_id
-            });
+            try {
+                // Try to answer the callback query to prevent timeout
+                await this.bot.answerCallbackQuery(query.id, {
+                    text: 'Error procesando solicitud. Intenta de nuevo.',
+                    show_alert: true
+                });
+            } catch (callbackError) {
+                console.error('❌ Error answering callback query:', callbackError);
+            }
         }
-        else if (data === 'waitlist_no') {
-            await this.bot.editMessageText('👍 Entendido. ¡Que tengas buen día!', {
-                chat_id: query.message.chat.id,
-                message_id: query.message.message_id
-            });
-        }
-        
-        await this.bot.answerCallbackQuery(query.id);
     }
     
     setupAutomaticCleanup() {
