@@ -179,7 +179,7 @@ class ParkingManager {
 		return results;
 	}
 
-	formatWeekStatus(weekStatus) {
+	async formatWeekStatus(weekStatus) {
 		const now = moment().tz("America/Montevideo");
 		const isAfterFridayReset = now.day() === 5 && now.hour() >= 17;
 		const isWeekend = now.day() === 0 || now.day() === 6;
@@ -217,6 +217,16 @@ class ParkingManager {
 
 			if (spots.length === 0) {
 				responseText += `⚠️ No hay espacios configurados\n`;
+			}
+
+			// Add waitlist information
+			try {
+				const waitlistCount = await this.db.getWaitlistCount(dateStr);
+				if (waitlistCount > 0) {
+					responseText += `📝 En lista de espera: ${waitlistCount} persona${waitlistCount > 1 ? 's' : ''}\n`;
+				}
+			} catch (error) {
+				console.error('Error getting waitlist count for', dateStr, ':', error);
 			}
 
 			responseText += "\n";

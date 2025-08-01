@@ -507,7 +507,7 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
     
     async handleStatusRequest(msg) {
         const status = await this.parkingManager.getWeekStatus();
-        const responseText = this.parkingManager.formatWeekStatus(status);
+        const responseText = await this.parkingManager.formatWeekStatus(status);
         await this.bot.sendMessage(msg.chat.id, responseText);
     }
     

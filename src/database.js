@@ -549,6 +549,19 @@ class Database {
         });
     }
     
+    async getWaitlistCount(date) {
+        return new Promise((resolve, reject) => {
+            this.db.get(
+                'SELECT COUNT(*) as count FROM waitlist WHERE date = ?',
+                [date],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row ? row.count : 0);
+                }
+            );
+        });
+    }
+    
     async clearAllReservations() {
         return new Promise((resolve, reject) => {
             this.db.serialize(() => {
