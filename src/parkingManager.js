@@ -89,17 +89,27 @@ class ParkingManager {
 	async getWeekStatus() {
 		const now = moment().tz("America/Montevideo");
 
-		// Calcular semana laboral actual (lunes a viernes)
+		// Check if it's after Friday 17:00 reset
+		const isAfterFridayReset = now.day() === 5 && now.hour() >= 17;
+		
+		// Calcular semana laboral
 		let startOfWeek;
 
-		if (now.day() === 0) {
-			// Si es domingo, mostrar la semana que empieza mañana
-			startOfWeek = now.clone().add(1, "day"); // Lunes
-		} else if (now.day() === 6) {
-			// Si es sábado, mostrar la semana que empieza en 2 días
-			startOfWeek = now.clone().add(2, "day"); // Lunes
+		if (now.day() === 0 || now.day() === 6 || isAfterFridayReset) {
+			// Si es fin de semana O viernes después de las 17:00, mostrar próxima semana
+			const nextMonday = now.clone().add(1, 'week').day(1);
+			if (now.day() === 0) {
+				// Domingo: el lunes próximo es mañana
+				startOfWeek = now.clone().add(1, "day");
+			} else if (now.day() === 6) {
+				// Sábado: el lunes próximo es en 2 días
+				startOfWeek = now.clone().add(2, "day");
+			} else {
+				// Viernes después de las 17:00: el próximo lunes
+				startOfWeek = now.clone().add(3, "day"); // Viernes + 3 = Lunes
+			}
 		} else {
-			// Para días laborables, ir al lunes de esta semana
+			// Para días laborables (antes del reset del viernes), ir al lunes de esta semana
 			startOfWeek = now.clone().day(1); // Día 1 = lunes
 		}
 
@@ -170,7 +180,15 @@ class ParkingManager {
 	}
 
 	formatWeekStatus(weekStatus) {
-		let responseText = "📅 *Estado de la semana:*\n\n";
+		const now = moment().tz("America/Montevideo");
+		const isAfterFridayReset = now.day() === 5 && now.hour() >= 17;
+		const isWeekend = now.day() === 0 || now.day() === 6;
+		
+		// Determinar si estamos mostrando la próxima semana
+		const showingNextWeek = isWeekend || isAfterFridayReset;
+		const headerText = showingNextWeek ? "📅 *Estado de la próxima semana:*\n\n" : "📅 *Estado de la semana:*\n\n";
+		
+		let responseText = headerText;
 
 		for (const [dateStr, spots] of Object.entries(weekStatus)) {
 			const date = moment(dateStr);

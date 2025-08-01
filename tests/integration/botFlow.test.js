@@ -170,7 +170,7 @@ describe('Bot Complete Flow Tests', () => {
         
         bot.simulateMessage(111, 'estado');
         await new Promise(resolve => setTimeout(resolve, 10));
-        expect(bot.getLastMessage().text).toContain('Estado de la semana');
+        expect(bot.getLastMessage().text).toMatch(/Estado de la (semana|próxima semana)/);
     });
 
     test('Double booking prevention', async () => {

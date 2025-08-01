@@ -271,6 +271,49 @@ class WTCParkBotWebhook {
                 await this.bot.sendMessage(chatId, '❌ No se pudo procesar ningún espacio fijo');
             }
         }
+        else if (text === '/nextreset') {
+            const now = moment().tz('America/Montevideo');
+            let nextFriday = now.clone();
+            
+            if (now.day() === 5 && now.hour() < 17) {
+                nextFriday = now.clone().hour(17).minute(0).second(0);
+            } else {
+                nextFriday = now.clone().day(5 + 7).hour(17).minute(0).second(0);
+            }
+            
+            const timeUntilReset = nextFriday.diff(now);
+            const duration = moment.duration(timeUntilReset);
+            const days = Math.floor(duration.asDays());
+            const hours = duration.hours();
+            const minutes = duration.minutes();
+            
+            await this.bot.sendMessage(chatId, 
+                `⏰ *Próximo Reset Automático:*\n\n` +
+                `📅 Fecha: ${nextFriday.format('dddd DD/MM/YYYY HH:mm')}\n` +
+                `⏳ Tiempo restante: ${days}d ${hours}h ${minutes}m\n\n` +
+                `🤖 Estado: ${this.fridayResetTimeout ? 'Programado ✅' : 'No programado ❌'}\n` +
+                `🌍 Zona horaria: America/Montevideo\n` +
+                `🕐 Hora actual: ${now.format('dddd DD/MM/YYYY HH:mm')}`,
+                { parse_mode: 'Markdown' }
+            );
+        }
+        else if (text === '/testreset') {
+            try {
+                console.log('🧪 Test reset ejecutado manualmente por supervisor');
+                const result = await this.db.resetCurrentWeekReservations();
+                
+                await this.bot.sendMessage(chatId, 
+                    `🧪 *Test Reset Ejecutado*\n\n` +
+                    `✅ Reservas eliminadas: ${result.reservationsCleared}\n` +
+                    `✅ Lista de espera eliminada: ${result.waitlistCleared}\n\n` +
+                    `⚠️ Esto fue una prueba manual. El reset automático sigue programado.`,
+                    { parse_mode: 'Markdown' }
+                );
+            } catch (error) {
+                console.error('Error en test reset:', error);
+                await this.bot.sendMessage(chatId, '❌ Error ejecutando test reset: ' + error.message);
+            }
+        }
         else if (text === '/helpsuper') {
             const helpText = `🔧 *Comandos de Administrador:*
 
@@ -281,9 +324,11 @@ class WTCParkBotWebhook {
 📊 *Información:*
 • \`/stats\` - Ver estadísticas del sistema
 • \`/version\` - Ver versión y estado del bot
+• \`/nextreset\` - Ver próximo reset automático
 
 🗑️ *Gestión:*
 • \`/clear\` - Limpiar todas las reservas
+• \`/testreset\` - Ejecutar reset manualmente (test)
 
 ℹ️ *Formato espacios fijos:*
 \`/setfixed NUMERO1,NUMERO2,NUMERO3\`
