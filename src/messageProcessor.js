@@ -167,6 +167,11 @@ class MessageProcessor {
         // Verificar si menciona "próxima semana"
         const isNextWeek = /pr[oó]xim[ao]\s+semana|la\s+pr[oó]xim[ao]\s+semana/i.test(text);
         
+        // Check if it's after Friday 17:00 reset (same logic as parkingManager)
+        const isAfterFridayReset = now.day() === 5 && now.hour() >= 17;
+        const isWeekend = now.day() === 0 || now.day() === 6;
+        const shouldUseNextWeek = isWeekend || isAfterFridayReset;
+        
         // Buscar día específico
         const dayMatch = text.match(/(lunes|martes|mi[eé]rcoles|jueves|viernes)/i);
         if (dayMatch) {
@@ -178,6 +183,9 @@ class MessageProcessor {
                 
                 // Si específicamente mencionó próxima semana
                 if (isNextWeek) {
+                    targetDate = now.clone().add(1, 'week').day(targetDay);
+                } else if (shouldUseNextWeek) {
+                    // Después del viernes 17:00 o en fin de semana, usar próxima semana
                     targetDate = now.clone().add(1, 'week').day(targetDay);
                 } else {
                     // Para esta semana
@@ -224,19 +232,28 @@ class MessageProcessor {
             const now = moment().tz('America/Montevideo');
             const isNextWeek = /pr[oó]xim[ao]\s+semana|la\s+pr[oó]xim[ao]\s+semana/i.test(text);
             
+            // Check if it's after Friday 17:00 reset (same logic as extractDate)
+            const isAfterFridayReset = now.day() === 5 && now.hour() >= 17;
+            const isWeekend = now.day() === 0 || now.day() === 6;
+            const shouldUseNextWeek = isWeekend || isAfterFridayReset;
+            
             dayMatches.forEach(dayName => {
                 const targetDay = this.dayMap[dayName.toLowerCase()] || 
                                 this.dayMap[dayName.toLowerCase().replace('é', 'e')];
                 
                 if (targetDay) {
-                    let targetDate = now.clone().day(targetDay);
-                    
-                    if (targetDate.isBefore(now, 'day')) {
-                        targetDate.add(1, 'week');
-                    }
+                    let targetDate;
                     
                     if (isNextWeek) {
                         targetDate = now.clone().add(1, 'week').day(targetDay);
+                    } else if (shouldUseNextWeek) {
+                        targetDate = now.clone().add(1, 'week').day(targetDay);
+                    } else {
+                        targetDate = now.clone().day(targetDay);
+                        
+                        if (targetDate.isBefore(now, 'day')) {
+                            targetDate.add(1, 'week');
+                        }
                     }
                     
                     days.push(targetDate);
@@ -252,20 +269,28 @@ class MessageProcessor {
         const now = moment().tz('America/Montevideo');
         const isNextWeek = /pr[oó]xim[ao]\s+semana|la\s+pr[oó]xim[ao]\s+semana/i.test(text);
         
+        // Check if it's after Friday 17:00 reset (same logic as other methods)
+        const isAfterFridayReset = now.day() === 5 && now.hour() >= 17;
+        const isWeekend = now.day() === 0 || now.day() === 6;
+        const shouldUseNextWeek = isWeekend || isAfterFridayReset;
+        
         const days = [];
         const weekDays = [1, 2, 3, 4, 5]; // Lunes a viernes
         
         weekDays.forEach(dayNumber => {
-            let targetDate = now.clone().day(dayNumber);
+            let targetDate;
             
-            // Si el día ya pasó esta semana, mover a la siguiente
-            if (targetDate.isBefore(now, 'day')) {
-                targetDate.add(1, 'week');
-            }
-            
-            // Si específicamente mencionó próxima semana
             if (isNextWeek) {
                 targetDate = now.clone().add(1, 'week').day(dayNumber);
+            } else if (shouldUseNextWeek) {
+                targetDate = now.clone().add(1, 'week').day(dayNumber);
+            } else {
+                targetDate = now.clone().day(dayNumber);
+                
+                // Si el día ya pasó esta semana, mover a la siguiente
+                if (targetDate.isBefore(now, 'day')) {
+                    targetDate.add(1, 'week');
+                }
             }
             
             days.push(targetDate);
