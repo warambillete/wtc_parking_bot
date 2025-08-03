@@ -147,21 +147,28 @@ describe('ParkingManager Integration Tests', () => {
 
     describe('Week Status', () => {
         test('should get correct week status', async () => {
-            const tomorrow = moment().add(1, 'day');
+            const now = moment().tz('America/Montevideo');
             const userId = 123456;
             const user = { username: 'testuser', first_name: 'Test' };
 
-            // Make a reservation
-            await parkingManager.reserveSpot(userId, user, tomorrow);
-
-            // Get week status
+            // Get week status to see what dates are being shown
             const status = await parkingManager.getWeekStatus();
-            const tomorrowStr = tomorrow.format('YYYY-MM-DD');
-
-            expect(status[tomorrowStr]).toBeDefined();
-            expect(status[tomorrowStr].length).toBe(3); // 3 total spots
+            const statusDates = Object.keys(status);
             
-            const reservedCount = status[tomorrowStr].filter(s => s.reserved).length;
+            // Use the first date from the status (should be Monday)
+            const firstDate = moment(statusDates[0]);
+            
+            // Make a reservation for that date
+            await parkingManager.reserveSpot(userId, user, firstDate);
+
+            // Get week status again
+            const updatedStatus = await parkingManager.getWeekStatus();
+            const firstDateStr = firstDate.format('YYYY-MM-DD');
+
+            expect(updatedStatus[firstDateStr]).toBeDefined();
+            expect(updatedStatus[firstDateStr].length).toBe(3); // 3 total spots
+            
+            const reservedCount = updatedStatus[firstDateStr].filter(s => s.reserved).length;
             expect(reservedCount).toBe(1);
         });
 

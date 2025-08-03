@@ -169,8 +169,10 @@ class MessageProcessor {
         
         // Check if it's after Friday 17:00 reset (same logic as parkingManager)
         const isAfterFridayReset = now.day() === 5 && now.hour() >= 17;
-        const isWeekend = now.day() === 0 || now.day() === 6;
-        const shouldUseNextWeek = isWeekend || isAfterFridayReset;
+        const isSaturday = now.day() === 6;
+        // Sunday (day 0) should allow booking for this week (Monday-Friday coming up)
+        // Saturday should use next week since work week is over
+        const shouldUseNextWeek = isSaturday || isAfterFridayReset;
         
         // Buscar día específico
         const dayMatch = text.match(/(lunes|martes|mi[eé]rcoles|jueves|viernes)/i);
@@ -234,8 +236,9 @@ class MessageProcessor {
             
             // Check if it's after Friday 17:00 reset (same logic as extractDate)
             const isAfterFridayReset = now.day() === 5 && now.hour() >= 17;
-            const isWeekend = now.day() === 0 || now.day() === 6;
-            const shouldUseNextWeek = isWeekend || isAfterFridayReset;
+            const isSaturday = now.day() === 6;
+            // Sunday (day 0) should allow booking for this week (Monday-Friday coming up)
+            const shouldUseNextWeek = isSaturday || isAfterFridayReset;
             
             dayMatches.forEach(dayName => {
                 const targetDay = this.dayMap[dayName.toLowerCase()] || 
@@ -271,8 +274,9 @@ class MessageProcessor {
         
         // Check if it's after Friday 17:00 reset (same logic as other methods)
         const isAfterFridayReset = now.day() === 5 && now.hour() >= 17;
-        const isWeekend = now.day() === 0 || now.day() === 6;
-        const shouldUseNextWeek = isWeekend || isAfterFridayReset;
+        const isSaturday = now.day() === 6;
+        // Sunday (day 0) should allow booking for this week (Monday-Friday coming up)
+        const shouldUseNextWeek = isSaturday || isAfterFridayReset;
         
         const days = [];
         const weekDays = [1, 2, 3, 4, 5]; // Lunes a viernes

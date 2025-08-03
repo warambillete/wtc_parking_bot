@@ -182,10 +182,11 @@ class ParkingManager {
 	async formatWeekStatus(weekStatus) {
 		const now = moment().tz("America/Montevideo");
 		const isAfterFridayReset = now.day() === 5 && now.hour() >= 17;
-		const isWeekend = now.day() === 0 || now.day() === 6;
+		const isSaturday = now.day() === 6;
 		
 		// Determinar si estamos mostrando la próxima semana
-		const showingNextWeek = isWeekend || isAfterFridayReset;
+		// Sunday should show "esta semana" since it shows Monday-Friday coming up
+		const showingNextWeek = isSaturday || isAfterFridayReset;
 		const headerText = showingNextWeek ? "📅 *Estado de la próxima semana:*\n\n" : "📅 *Estado de la semana:*\n\n";
 		
 		let responseText = headerText;
