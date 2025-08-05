@@ -2,7 +2,6 @@ const TelegramBotMock = require('../mocks/TelegramBotMock');
 const Database = require('../../src/database');
 const MessageProcessor = require('../../src/messageProcessor');
 const ParkingManager = require('../../src/parkingManager');
-const QueueManager = require('../../src/queueManager');
 const moment = require('moment-timezone');
 
 // Simplified Bot class for testing
@@ -12,7 +11,6 @@ class TestBot {
         this.db = db;
         this.messageProcessor = new MessageProcessor();
         this.parkingManager = new ParkingManager(db);
-        this.queueManager = new QueueManager(db, bot);
         this.supervisorId = '999999';
         
         this.setupHandlers();

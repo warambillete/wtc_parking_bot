@@ -37,9 +37,13 @@ describe('Fixed Spaces Feature Tests', () => {
             expect(result.startDate).toBeDefined();
             expect(result.endDate).toBeDefined();
             
-            // Should be Monday to Friday
-            expect(result.startDate.day()).toBe(1); // Monday
-            expect(result.endDate.day()).toBe(5); // Friday
+            // Should be from current day to Friday (remaining days of current week)
+            const now = moment().tz('America/Montevideo');
+            if (now.day() >= 1 && now.day() <= 5) { // If current day is weekday
+                expect(result.startDate.day()).toBeGreaterThanOrEqual(now.day());
+                expect(result.endDate.day()).toBe(5); // Friday
+            }
+            // If it's weekend, no days should be returned (empty array)
         });
 
         test('should detect fixed spot release for multiple weeks', () => {
@@ -170,6 +174,31 @@ describe('Fixed Spaces Feature Tests', () => {
             const isFixed8034 = await db.isFixedSpot('8034');
             expect(isFixed8033).toBe(true);
             expect(isFixed8034).toBe(true);
+        });
+    });
+
+    describe('Waitlist Removal on Release', () => {
+        test('should remove user from waitlist when saying libero without reservation', async () => {
+            const tomorrow = moment().add(1, 'day');
+            const tomorrowStr = tomorrow.format('YYYY-MM-DD');
+            const userId = '999';
+            
+            // Add user to waitlist (no reservation)
+            await db.addToWaitlist(userId, { first_name: 'TestUser', username: 'testuser' }, tomorrowStr);
+            
+            // Verify user is in waitlist
+            let waitlistCount = await db.getWaitlistCount(tomorrowStr);
+            expect(waitlistCount).toBe(1);
+            
+            // Simulate "libero" command (user tries to release but has no reservation)
+            const removed = await db.removeFromWaitlist(userId, tomorrowStr);
+            
+            // Should successfully remove from waitlist
+            expect(removed).toBeGreaterThan(0);
+            
+            // Verify user is no longer in waitlist
+            waitlistCount = await db.getWaitlistCount(tomorrowStr);
+            expect(waitlistCount).toBe(0);
         });
     });
 });

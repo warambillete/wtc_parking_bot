@@ -1,18 +1,16 @@
 const moment = require('moment-timezone');
 const Database = require('../../src/database');
-const QueueManager = require('../../src/queueManager');
 const ParkingManager = require('../../src/parkingManager');
 const TelegramBotMock = require('../mocks/TelegramBotMock');
 
 describe('WTC Parking Bot Rules Validation', () => {
-    let db, queueManager, parkingManager, bot;
+    let db, parkingManager, bot;
     
     beforeEach(async () => {
         db = new Database(':memory:');
         await db.init();
         bot = new TelegramBotMock('test-token');
         parkingManager = new ParkingManager(db);
-        queueManager = new QueueManager(db, bot, parkingManager);
         
         // Set up parking spots
         await db.setParkingSpots(['1', '2', '3']);
@@ -26,7 +24,7 @@ describe('WTC Parking Bot Rules Validation', () => {
         test('should restrict supervisor commands to authorized user only', () => {
             // This is tested in the bot webhook level - supervisor ID check
             // In test environment, this might not be set, so we just verify the logic exists
-            expect(typeof queueManager.handleReservation).toBe('function');
+            expect(typeof parkingManager.reserveSpot).toBe('function');
         });
     });
 
@@ -73,7 +71,7 @@ describe('WTC Parking Bot Rules Validation', () => {
                 return;
             }
             
-            const result = await queueManager.handleReservation('123', { first_name: 'Test' }, tomorrow);
+            const result = await parkingManager.reserveSpot('123', { first_name: 'Test' }, tomorrow);
             
             expect(result.success).toBe(true);
             expect(result.spotNumber).toBeDefined();
@@ -87,30 +85,29 @@ describe('WTC Parking Bot Rules Validation', () => {
         });
 
         test('should calculate next week correctly based on Friday reset', () => {
-            // Test the core logic exists - detailed time mocking is complex in this environment
-            expect(typeof queueManager.isInQueuePeriod).toBe('function');
-            expect(typeof queueManager.isNextWeekBookingAllowed).toBe('function');
-            expect(typeof queueManager.isNextWeekReservation).toBe('function');
+            // Test the core logic exists - the Friday reset mechanism is in database
+            expect(typeof db.resetCurrentWeekReservations).toBe('function');
             
-            // Test that methods return boolean values
-            expect(typeof queueManager.isInQueuePeriod()).toBe('boolean');
-            expect(typeof queueManager.isNextWeekBookingAllowed()).toBe('boolean');
+            // Test that parkingManager can handle week status calculation
+            expect(typeof parkingManager.getWeekStatus).toBe('function');
             
-            // Test next week detection with a future Monday
-            const nextWeekMonday = moment().tz('America/Montevideo').add(1, 'week').day(1);
-            expect(typeof queueManager.isNextWeekReservation(nextWeekMonday)).toBe('boolean');
+            // Verify the method returns a promise/is async
+            const weekStatus = parkingManager.getWeekStatus();
+            expect(weekStatus).toBeInstanceOf(Promise);
         });
     });
 
-    describe('Lottery Period Rules', () => {
-        test('should identify lottery period correctly', () => {
-            // Test that lottery period logic exists and returns boolean
-            expect(typeof queueManager.isInQueuePeriod()).toBe('boolean');
+    describe('Direct Booking Rules', () => {
+        test('should allow direct booking without lottery system', async () => {
+            // After removing lottery, all bookings should be direct
+            const nextMonday = moment().tz('America/Montevideo').add(1, 'week').day(1);
             
-            // The actual lottery period detection is time-dependent
-            // In a real scenario, this would be Friday 17:00-17:15
-            const result = queueManager.isInQueuePeriod();
-            expect(typeof result).toBe('boolean');
+            const result = await parkingManager.reserveSpot('456', { first_name: 'Test' }, nextMonday);
+            
+            // Should succeed immediately without queuing
+            expect(result.success).toBe(true);
+            expect(result.spotNumber).toBeDefined();
+            expect(result.queued).toBeUndefined(); // No queuing anymore
         });
     });
 
@@ -144,16 +141,16 @@ describe('WTC Parking Bot Rules Validation', () => {
             }
             
             // Fill spots and add to waitlist
-            await queueManager.handleReservation('user1', { first_name: 'User1' }, tomorrow);
-            await queueManager.handleReservation('user2', { first_name: 'User2' }, tomorrow);
-            await queueManager.handleReservation('user3', { first_name: 'User3' }, tomorrow);
+            await parkingManager.reserveSpot('user1', { first_name: 'User1' }, tomorrow);
+            await parkingManager.reserveSpot('user2', { first_name: 'User2' }, tomorrow);
+            await parkingManager.reserveSpot('user3', { first_name: 'User3' }, tomorrow);
             
             // Add to waitlist
             await db.addToWaitlist('user4', { first_name: 'User4', user_id: 'user4' }, tomorrow.format('YYYY-MM-DD'));
             
             // Release a spot and notify waitlist
             await parkingManager.releaseSpot('user1', tomorrow);
-            const notified = await queueManager.notifyWaitlist(tomorrow, '1');
+            const notified = await parkingManager.notifyWaitlist(tomorrow, '1', bot);
             
             expect(notified).toBe(true);
             
@@ -186,7 +183,7 @@ describe('WTC Parking Bot Rules Validation', () => {
             const mockWednesday = moment().tz('America/Montevideo').day(3).hour(14); // Wednesday 2PM
             moment.now = () => mockWednesday.valueOf();
             
-            const result = await queueManager.handleReservation('123', { first_name: 'Test' }, nextMonday);
+            const result = await parkingManager.reserveSpot('123', { first_name: 'Test' }, nextMonday);
             
             // Should be rejected because it's Wednesday and next week booking not allowed
             expect(result.success).toBe(false);
@@ -203,7 +200,7 @@ describe('WTC Parking Bot Rules Validation', () => {
             const mockFridayAfter = moment().tz('America/Montevideo').day(5).hour(17).minute(20);
             moment.now = () => mockFridayAfter.valueOf();
             
-            const result = await queueManager.handleReservation('123', { first_name: 'Test' }, nextMonday);
+            const result = await parkingManager.reserveSpot('123', { first_name: 'Test' }, nextMonday);
             
             // Should be allowed because it's Friday after 17:15
             expect(result.success).toBe(true);
@@ -212,20 +209,20 @@ describe('WTC Parking Bot Rules Validation', () => {
             moment.now = originalNow;
         });
         
-        test('should use lottery during Friday 17:00-17:15', async () => {
+        test('should allow direct booking during Friday after 17:00', async () => {
             const nextMonday = moment().tz('America/Montevideo').add(1, 'week').day(1);
             
-            // Mock Friday 17:05 (during lottery)
+            // Mock Friday 17:05 (after reset, no lottery anymore)
             const originalNow = moment.now;
-            const mockFridayLottery = moment().tz('America/Montevideo').day(5).hour(17).minute(5);
-            moment.now = () => mockFridayLottery.valueOf();
+            const mockFridayAfterReset = moment().tz('America/Montevideo').day(5).hour(17).minute(5);
+            moment.now = () => mockFridayAfterReset.valueOf();
             
-            const result = await queueManager.handleReservation('123', { first_name: 'Test' }, nextMonday);
+            const result = await parkingManager.reserveSpot('123', { first_name: 'Test' }, nextMonday);
             
-            // Should be queued (lottery is internal, users don't see it)
+            // Should succeed immediately (no lottery system)
             expect(result.success).toBe(true);
-            expect(result.queued).toBe(true);
-            expect(result.message).toContain('solicitud');
+            expect(result.spotNumber).toBeDefined();
+            expect(result.queued).toBeUndefined(); // No queuing anymore
             
             moment.now = originalNow;
         });

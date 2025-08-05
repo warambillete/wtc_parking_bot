@@ -235,6 +235,39 @@ class ParkingManager {
 
 		return responseText;
 	}
+
+	async notifyWaitlist(date, spotNumber, bot) {
+		const dateStr = date.format('YYYY-MM-DD');
+		const nextInLine = await this.db.getNextInWaitlist(dateStr);
+		
+		if (nextInLine) {
+			console.log(`📢 Notificando a ${nextInLine.first_name || nextInLine.username} sobre espacio liberado`);
+			
+			try {
+				// Assign the spot to the next person in waitlist
+				await this.db.createReservation(nextInLine.user_id, nextInLine, dateStr, spotNumber);
+				await this.db.removeFromWaitlist(nextInLine.user_id, dateStr);
+				
+				// Notify the user
+				try {
+					await bot.sendMessage(nextInLine.user_id, 
+						`🎉 ¡Buenas noticias! Se liberó un espacio y te hemos asignado el estacionamiento ${spotNumber} para ${date.format('dddd DD/MM')}`);
+					
+					console.log(`✅ Notificación enviada a ${nextInLine.first_name || nextInLine.username}`);
+					return true;
+				} catch (error) {
+					console.error('❌ Error enviando notificación de lista de espera:', error);
+					// If notification fails, we still keep the reservation assigned
+					return true; 
+				}
+			} catch (error) {
+				console.error('❌ Error asignando espacio de lista de espera:', error);
+				return false;
+			}
+		}
+		
+		return false; // No one in waitlist
+	}
 }
 
 module.exports = ParkingManager;

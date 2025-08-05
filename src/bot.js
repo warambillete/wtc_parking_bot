@@ -4,7 +4,6 @@ const moment = require('moment-timezone');
 const Database = require('./database');
 const MessageProcessor = require('./messageProcessor');
 const ParkingManager = require('./parkingManager');
-const QueueManager = require('./queueManager');
 
 moment.locale('es');
 moment.tz.setDefault('America/Montevideo');
@@ -32,7 +31,6 @@ class WTCParkBotWebhook {
         
         this.messageProcessor = new MessageProcessor();
         this.parkingManager = new ParkingManager(this.db);
-        this.queueManager = new QueueManager(this.db, this.bot, this.parkingManager);
         
         // Set up Express server for webhooks
         this.app = express();
@@ -342,7 +340,7 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
     }
     
     async handleReservation(msg, intent) {
-        const result = await this.queueManager.handleReservation(msg.from.id, msg.from, intent.date);
+        const result = await this.parkingManager.reserveSpot(msg.from.id, msg.from, intent.date);
         
         if (result.success) {
             await this.bot.sendMessage(msg.chat.id, 
@@ -365,16 +363,15 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
     async handleMultipleReservations(msg, intent) {
         const results = [];
         
-        // Process each date individually through QueueManager to respect lottery system
+        // Process each date individually through ParkingManager
         for (const date of intent.dates) {
             try {
-                const result = await this.queueManager.handleReservation(msg.from.id, msg.from, date);
+                const result = await this.parkingManager.reserveSpot(msg.from.id, msg.from, date);
                 results.push({
                     date: date,
                     success: result.success,
                     spotNumber: result.spotNumber,
                     message: result.message,
-                    queued: result.queued,
                     waitlist: result.waitlist
                 });
             } catch (error) {
@@ -388,9 +385,8 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
         }
         
         const successful = results.filter(r => r.success);
-        const queued = results.filter(r => r.queued);
         const waitlisted = results.filter(r => r.waitlist);
-        const failed = results.filter(r => !r.success && !r.queued && !r.waitlist);
+        const failed = results.filter(r => !r.success && !r.waitlist);
         
         let responseText = '';
         
@@ -398,13 +394,6 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
             responseText += `✅ Reservas exitosas:\n`;
             successful.forEach(r => {
                 responseText += `• ${r.date.format('dddd DD/MM')}: Estacionamiento ${r.spotNumber}\n`;
-            });
-        }
-        
-        if (queued.length > 0) {
-            responseText += `\n🎲 En cola de lotería:\n`;
-            queued.forEach(r => {
-                responseText += `• ${r.date.format('dddd DD/MM')}: En cola para sorteo del viernes 17:15\n`;
             });
         }
         
@@ -449,9 +438,21 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
                 `✅ Liberado estacionamiento ${result.spotNumber} para ${intent.date.format('dddd DD/MM')}`);
             
             // Notify waitlist
-            await this.queueManager.notifyWaitlist(intent.date, result.spotNumber);
+            await this.parkingManager.notifyWaitlist(intent.date, result.spotNumber, this.bot);
         } else {
-            await this.bot.sendMessage(msg.chat.id, `❌ ${result.message}`);
+            // If no reservation to release, check if user is in waitlist and remove them
+            try {
+                const removed = await this.db.removeFromWaitlist(msg.from.id, intent.date.format('YYYY-MM-DD'));
+                if (removed > 0) {
+                    await this.bot.sendMessage(msg.chat.id, 
+                        `✅ Te hemos quitado de la lista de espera para ${intent.date.format('dddd DD/MM')}`);
+                } else {
+                    await this.bot.sendMessage(msg.chat.id, `❌ ${result.message}`);
+                }
+            } catch (error) {
+                console.error('Error checking/removing from waitlist:', error);
+                await this.bot.sendMessage(msg.chat.id, `❌ ${result.message}`);
+            }
         }
     }
     
@@ -469,9 +470,20 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
                     message: result.message
                 });
                 
-                // Notify waitlist for successful releases
+                // Notify waitlist for successful releases, or remove from waitlist if failed
                 if (result.success) {
-                    await this.queueManager.notifyWaitlist(intent.dates[i], result.spotNumber);
+                    await this.parkingManager.notifyWaitlist(intent.dates[i], result.spotNumber, this.bot);
+                } else {
+                    // If no reservation to release, try to remove from waitlist
+                    try {
+                        const removed = await this.db.removeFromWaitlist(msg.from.id, intent.dates[i].format('YYYY-MM-DD'));
+                        if (removed > 0) {
+                            results[results.length - 1].message = 'Quitado de lista de espera';
+                            results[results.length - 1].success = true; // Mark as success for display
+                        }
+                    } catch (error) {
+                        console.error('Error removing from waitlist:', error);
+                    }
                 }
             } catch (error) {
                 console.error(`Error releasing spot for ${intent.dates[i].format('YYYY-MM-DD')}:`, error);

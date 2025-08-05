@@ -303,19 +303,48 @@ class MessageProcessor {
         return days;
     }
     
+    // Get remaining weekdays of current week (for fixed spot releases)
+    getRemainingWeekDays() {
+        const now = moment().tz('America/Montevideo');
+        const days = [];
+        
+        // Get current day (0=Sunday, 1=Monday, ..., 6=Saturday)
+        const currentDay = now.day();
+        
+        // Define weekdays (1=Monday through 5=Friday)
+        const weekDays = [1, 2, 3, 4, 5];
+        
+        // If it's weekend (Saturday=6 or Sunday=0), return empty array
+        if (currentDay === 0 || currentDay === 6) {
+            return [];
+        }
+        
+        // Include remaining days of current week (including today if it's a weekday)
+        weekDays.forEach(dayNumber => {
+            if (dayNumber >= currentDay) {
+                const targetDate = now.clone().day(dayNumber);
+                days.push(targetDate);
+            }
+        });
+        
+        return days;
+    }
+    
     // Parse fixed spot release information
     parseFixedRelease(text, match, spotNumber) {
         const now = moment().tz('America/Montevideo');
         
         // Check for "toda la semana" (whole week)
         if (/toda\s+la\s+semana|por\s+toda\s+la\s+semana/i.test(text)) {
-            const dates = this.getWholeWeek(text);
-            return { 
-                type: 'FIXED_RELEASE', 
-                spotNumber, 
-                startDate: dates[0], 
-                endDate: dates[dates.length - 1] 
-            };
+            const dates = this.getRemainingWeekDays();
+            if (dates.length > 0) {
+                return { 
+                    type: 'FIXED_RELEASE', 
+                    spotNumber, 
+                    startDate: dates[0], 
+                    endDate: dates[dates.length - 1] 
+                };
+            }
         }
         
         // Check for "por X semanas" (for X weeks)
