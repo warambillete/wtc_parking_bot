@@ -14,11 +14,21 @@ class WTCParkBotWebhook {
         this.token = process.env.TELEGRAM_BOT_TOKEN;
         this.supervisorId = process.env.SUPERVISOR_USER_ID;
         
+        // Automatic Reservation configuration
+        this.automaticReservationEnabled = process.env.AUTOMATIC_RESERVATION_ENABLED === 'true';
+        this.automaticReservationPreferredSpot = process.env.AUTOMATIC_RESERVATION_PREFERRED_SPOT || '1058';
+        this.automaticReservationFullWeek = process.env.AUTOMATIC_RESERVATION_FULL_WEEK !== 'false';
+        
         if (!this.token) {
             throw new Error('TELEGRAM_BOT_TOKEN no está configurado');
         }
 
         console.log('🚀 Starting WTC Parking Bot (WEBHOOK MODE)...');
+        if (this.automaticReservationEnabled) {
+            console.log('✅ Automatic Reservation feature enabled');
+            console.log(`   - Preferred spot: ${this.automaticReservationPreferredSpot}`);
+            console.log(`   - Full week reservation: ${this.automaticReservationFullWeek}`);
+        }
         this.initializeBot();
     }
     
@@ -635,8 +645,73 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
                     console.log('🔄 Running Friday 5PM reset...');
                     const result = await this.db.resetCurrentWeekReservations();
                     
-                    // Send notification to supervisor if configured
-                    if (this.supervisorId) {
+                    // Auto-reserve spot for supervisor (Wilman Arambillete) for next week
+                    if (this.supervisorId && this.automaticReservationEnabled) {
+                        try {
+                            // Get next Monday date
+                            const nextMonday = moment().tz('America/Montevideo').add(1, 'week').startOf('isoWeek');
+                            
+                            // Create supervisor user object
+                            const supervisorUser = {
+                                username: 'warambillete',
+                                first_name: 'Wilman',
+                                last_name: 'Arambillete'
+                            };
+                            
+                            // Try to reserve the entire next week
+                            const weekDays = [];
+                            for (let i = 0; i < 5; i++) {
+                                weekDays.push(nextMonday.clone().add(i, 'days').format('YYYY-MM-DD'));
+                            }
+                            
+                            // Silently perform automatic reservations
+                            for (const date of weekDays) {
+                                // Check if preferred spot is available
+                                const spots = await this.db.getParkingSpots();
+                                const preferredSpotExists = spots.some(spot => spot.number === this.automaticReservationPreferredSpot);
+                                
+                                let spotToReserve = null;
+                                
+                                if (preferredSpotExists) {
+                                    // Check if preferred spot is available for this date
+                                    const reservations = await this.db.getReservationsByDate(date);
+                                    const isPreferredSpotReserved = reservations.some(res => res.spot_number === this.automaticReservationPreferredSpot);
+                                    
+                                    if (!isPreferredSpotReserved) {
+                                        spotToReserve = this.automaticReservationPreferredSpot;
+                                    }
+                                }
+                                
+                                // If preferred spot is not available or doesn't exist, get any available spot
+                                if (!spotToReserve) {
+                                    const availableSpot = await this.db.getAvailableSpot(date);
+                                    if (availableSpot) {
+                                        spotToReserve = availableSpot;
+                                    }
+                                }
+                                
+                                // Make the reservation
+                                if (spotToReserve) {
+                                    try {
+                                        await this.db.createReservation(this.supervisorId, supervisorUser, date, spotToReserve);
+                                        console.log(`Auto-reserved spot ${spotToReserve} for ${date}`);
+                                    } catch (err) {
+                                        console.error(`Error auto-reserving for ${date}:`, err);
+                                    }
+                                }
+                            }
+                            
+                            // Send only the reset notification
+                            await this.bot.sendMessage(this.supervisorId, 
+                                `🔄 Reset automático de viernes 17:00 completado: ${result.reservationsCleared} reservas y ${result.waitlistCleared} listas de espera eliminadas.`);
+                        } catch (error) {
+                            console.error('Error during supervisor auto-reservation:', error);
+                            // Still send regular reset notification even if auto-reservation failed
+                            await this.bot.sendMessage(this.supervisorId, 
+                                `🔄 Reset automático de viernes 17:00 completado: ${result.reservationsCleared} reservas y ${result.waitlistCleared} listas de espera eliminadas.`);
+                        }
+                    } else if (this.supervisorId && !this.automaticReservationEnabled) {
+                        // Send regular notification without automatic reservation
                         try {
                             await this.bot.sendMessage(this.supervisorId, 
                                 `🔄 Reset automático de viernes 17:00 completado: ${result.reservationsCleared} reservas y ${result.waitlistCleared} listas de espera eliminadas.`);
