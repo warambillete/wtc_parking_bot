@@ -31,7 +31,7 @@ describe('WTC Parking Bot Rules Validation', () => {
     describe('Date Validation Rules', () => {
         test('should reject past dates', async () => {
             const yesterday = moment().tz('America/Montevideo').subtract(1, 'day');
-            const result = await queueManager.handleReservation('123', { first_name: 'Test' }, yesterday);
+            const result = await parkingManager.reserveSpot('123', { first_name: 'Test' }, yesterday);
             
             expect(result.success).toBe(false);
             expect(result.message).toContain('fechas pasadas');
@@ -44,7 +44,7 @@ describe('WTC Parking Bot Rules Validation', () => {
                 nextSaturday.add(1, 'week');
             }
             
-            const result = await queueManager.handleReservation('123', { first_name: 'Test' }, nextSaturday);
+            const result = await parkingManager.reserveSpot('123', { first_name: 'Test' }, nextSaturday);
             
             expect(result.success).toBe(false);
             expect(result.message).toContain('fines de semana');
@@ -57,7 +57,7 @@ describe('WTC Parking Bot Rules Validation', () => {
                 nextSunday.add(1, 'week');
             }
             
-            const result = await queueManager.handleReservation('123', { first_name: 'Test' }, nextSunday);
+            const result = await parkingManager.reserveSpot('123', { first_name: 'Test' }, nextSunday);
             
             expect(result.success).toBe(false);
             expect(result.message).toContain('fines de semana');
@@ -121,12 +121,12 @@ describe('WTC Parking Bot Rules Validation', () => {
             }
             
             // Fill all spots
-            await queueManager.handleReservation('user1', { first_name: 'User1' }, tomorrow);
-            await queueManager.handleReservation('user2', { first_name: 'User2' }, tomorrow);
-            await queueManager.handleReservation('user3', { first_name: 'User3' }, tomorrow);
+            await parkingManager.reserveSpot('user1', { first_name: 'User1' }, tomorrow);
+            await parkingManager.reserveSpot('user2', { first_name: 'User2' }, tomorrow);
+            await parkingManager.reserveSpot('user3', { first_name: 'User3' }, tomorrow);
             
             // Fourth user should get waitlist
-            const result = await queueManager.handleReservation('user4', { first_name: 'User4' }, tomorrow);
+            const result = await parkingManager.reserveSpot('user4', { first_name: 'User4' }, tomorrow);
             
             expect(result.success).toBe(false);
             expect(result.waitlist).toBe(true);

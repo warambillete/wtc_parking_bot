@@ -327,9 +327,27 @@ class Database {
     
     async getUserReservations(userId) {
         return new Promise((resolve, reject) => {
+            const moment = require('moment-timezone');
+            const now = moment().tz('America/Montevideo');
+            
+            // Determine which week to show based on Friday 17:00 logic
+            let startOfWeek;
+            if (now.day() === 5 && now.hour() >= 17) {
+                // If it's Friday after 17:00, show next week
+                startOfWeek = now.clone().add(1, 'week').startOf('isoWeek');
+            } else if (now.day() === 6 || now.day() === 0) {
+                // If it's weekend, show next week
+                startOfWeek = now.clone().add(1, 'week').startOf('isoWeek');
+            } else {
+                // Otherwise show current week
+                startOfWeek = now.clone().startOf('isoWeek');
+            }
+            
+            const endOfWeek = startOfWeek.clone().add(4, 'days'); // Friday
+            
             this.db.all(
-                'SELECT * FROM reservations WHERE user_id = ? ORDER BY date',
-                [userId],
+                'SELECT * FROM reservations WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date',
+                [userId, startOfWeek.format('YYYY-MM-DD'), endOfWeek.format('YYYY-MM-DD')],
                 (err, rows) => {
                     if (err) reject(err);
                     else resolve(rows);
