@@ -939,15 +939,25 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
 								last_name: "Arambillete",
 							};
 
-							// Try to reserve the entire next week
+							// Determine which days to reserve based on configuration
 							const weekDays = [];
-							for (let i = 0; i < 5; i++) {
-								weekDays.push(
-									nextMonday
-										.clone()
-										.add(i, "days")
-										.format("YYYY-MM-DD")
-								);
+							if (this.automaticReservationFullWeek) {
+								// Reserve entire week (Monday to Friday)
+								for (let i = 0; i < 5; i++) {
+									weekDays.push(
+										nextMonday
+											.clone()
+											.add(i, "days")
+											.format("YYYY-MM-DD")
+									);
+								}
+							} else {
+								// Reserve only Friday
+								const nextFridayDate = nextMonday
+									.clone()
+									.add(4, "days")
+									.format("YYYY-MM-DD");
+								weekDays.push(nextFridayDate);
 							}
 
 							// Silently perform automatic reservations

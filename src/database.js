@@ -356,6 +356,19 @@ class Database {
         });
     }
     
+    async getReservationsByUser(userId) {
+        return new Promise((resolve, reject) => {
+            this.db.all(
+                'SELECT * FROM reservations WHERE user_id = ? ORDER BY date',
+                [userId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+    }
+    
     async getDayReservations(date) {
         return new Promise((resolve, reject) => {
             this.db.all(
@@ -367,6 +380,11 @@ class Database {
                 }
             );
         });
+    }
+    
+    // Alias for getDayReservations
+    async getReservationsByDate(date) {
+        return this.getDayReservations(date);
     }
     
     async getAvailableSpot(date) {
@@ -654,10 +672,12 @@ class Database {
         const weekStart = now.clone().day(1); // Monday of current week
         const weekEnd = now.clone().day(5);   // Friday of current week
         
+        const db = this.db; // Store reference to db
+        
         return new Promise((resolve, reject) => {
-            this.db.serialize(() => {
+            db.serialize(() => {
                 // Clear all reservations for current work week (Monday-Friday)
-                this.db.run(
+                db.run(
                     'DELETE FROM reservations WHERE date >= ? AND date <= ?', 
                     [weekStart.format('YYYY-MM-DD'), weekEnd.format('YYYY-MM-DD')], 
                     function(err) {
@@ -670,7 +690,7 @@ class Database {
                         const reservationsCleared = this.changes;
                         
                         // Clear all waitlist entries for current work week
-                        this.db.run(
+                        db.run(
                             'DELETE FROM waitlist WHERE date >= ? AND date <= ?', 
                             [weekStart.format('YYYY-MM-DD'), weekEnd.format('YYYY-MM-DD')], 
                             function(err) {
