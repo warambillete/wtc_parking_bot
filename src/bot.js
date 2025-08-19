@@ -376,14 +376,14 @@ class WTCParkBotWebhook {
 				);
 			}
 		} else if (text === '/reassign') {
-			if (!this.isSupervisor(userId)) {
+			if (userId.toString() !== this.supervisorId) {
 				await this.bot.sendMessage(chatId, '❌ No tienes permisos para ejecutar este comando');
 				return;
 			}
 			
 			await this.handleReassignFreedSpaces(chatId);
 		} else if (text === '/assign') {
-			if (!this.isSupervisor(userId)) {
+			if (userId.toString() !== this.supervisorId) {
 				await this.bot.sendMessage(chatId, '❌ No tienes permisos para ejecutar este comando');
 				return;
 			}
