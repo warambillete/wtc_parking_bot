@@ -813,12 +813,22 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
             const moment = require('moment-timezone');
             
             // Get all released fixed spots for future dates
-            const releasedSpots = await this.db.query(`
-                SELECT DISTINCT fsr.spot_number, fsr.start_date, fsr.end_date
-                FROM fixed_spot_releases fsr
-                WHERE fsr.end_date >= date('now')
-                ORDER BY fsr.start_date
-            `);
+            let releasedSpots = [];
+            try {
+                releasedSpots = await this.db.query(`
+                    SELECT DISTINCT fsr.spot_number, fsr.start_date, fsr.end_date
+                    FROM fixed_spot_releases fsr
+                    WHERE fsr.end_date >= date('now')
+                    ORDER BY fsr.start_date
+                `);
+            } catch (dbError) {
+                if (dbError.message.includes('no such table: fixed_spot_releases')) {
+                    console.log('Fixed spot releases table not ready yet, skipping reassignment');
+                    await this.bot.sendMessage(chatId, '⚠️ Sistema de espacios fijos aún no está completamente inicializado. Intenta de nuevo en unos segundos.');
+                    return;
+                }
+                throw dbError; // Re-throw other database errors
+            }
             
             if (!releasedSpots || releasedSpots.length === 0) {
                 await this.bot.sendMessage(chatId, '✅ No hay espacios fijos liberados pendientes de asignar.');
