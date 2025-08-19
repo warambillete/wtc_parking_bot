@@ -245,7 +245,7 @@ class ParkingManager {
 					responseText += `📝 En espera:\n`;
 					waitlistUsers.forEach((user) => {
 						const name = user.first_name || user.username || 'Usuario';
-						responseText += `   • ?: ${name} (en espera)\n`;
+						responseText += `   • ?: ${name}\n`;
 					});
 				}
 			} catch (error) {
