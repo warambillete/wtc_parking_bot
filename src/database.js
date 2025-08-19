@@ -258,16 +258,23 @@ class Database {
     }
     
     createFixedTableIndexes() {
+        // Skip index creation in test environment to avoid timing issues
+        if (process.env.NODE_ENV === 'test') {
+            return;
+        }
+        
         // Wait a bit to ensure tables are created, then create indexes
         setTimeout(() => {
+            if (!this.db) return; // Database might be closed
+            
             this.db.serialize(() => {
                 this.db.run(`CREATE INDEX IF NOT EXISTS idx_fixed_releases_spot ON fixed_spot_releases(spot_number)`, (err) => {
-                    if (err && !err.message.includes('no such table')) {
+                    if (err && !err.message.includes('no such table') && !err.message.includes('Database is closed')) {
                         console.error('Error creating fixed releases spot index:', err);
                     }
                 });
                 this.db.run(`CREATE INDEX IF NOT EXISTS idx_fixed_releases_dates ON fixed_spot_releases(start_date, end_date)`, (err) => {
-                    if (err && !err.message.includes('no such table')) {
+                    if (err && !err.message.includes('no such table') && !err.message.includes('Database is closed')) {
                         console.error('Error creating fixed releases dates index:', err);
                     }
                 });
@@ -597,9 +604,10 @@ class Database {
     
     async removeFromWaitlist(userId, date) {
         return new Promise((resolve, reject) => {
-            this.db.serialize(() => {
+            const db = this.db; // Capture the db reference
+            db.serialize(() => {
                 // Obtener la posición del usuario que se va a eliminar
-                this.db.get(
+                db.get(
                     'SELECT position FROM waitlist WHERE user_id = ? AND date = ?',
                     [userId, date],
                     (err, result) => {
@@ -616,22 +624,24 @@ class Database {
                         const removedPosition = result.position;
                         
                         // Eliminar al usuario
-                        this.db.run(
+                        db.run(
                             'DELETE FROM waitlist WHERE user_id = ? AND date = ?',
                             [userId, date],
-                            (err) => {
+                            function(err) {
                                 if (err) {
                                     reject(err);
                                     return;
                                 }
                                 
+                                const deletedRows = this.changes;
+                                
                                 // Actualizar posiciones de los usuarios posteriores
-                                this.db.run(
+                                db.run(
                                     'UPDATE waitlist SET position = position - 1 WHERE date = ? AND position > ?',
                                     [date, removedPosition],
                                     function(err) {
                                         if (err) reject(err);
-                                        else resolve(this.changes);
+                                        else resolve(deletedRows); // Return the number of deleted rows, not updated rows
                                     }
                                 );
                             }

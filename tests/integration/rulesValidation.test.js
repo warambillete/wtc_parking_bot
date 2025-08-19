@@ -16,8 +16,12 @@ describe('WTC Parking Bot Rules Validation', () => {
         await db.setParkingSpots(['1', '2', '3']);
     });
     
-    afterEach(() => {
-        db.close();
+    afterEach(async () => {
+        // Wait a bit for any async operations to complete
+        await new Promise(resolve => setTimeout(resolve, 10));
+        if (db && db.db) {
+            db.close();
+        }
     });
 
     describe('Access Control Rules', () => {
@@ -183,7 +187,11 @@ describe('WTC Parking Bot Rules Validation', () => {
             const mockWednesday = moment().tz('America/Montevideo').day(3).hour(14); // Wednesday 2PM
             moment.now = () => mockWednesday.valueOf();
             
-            const result = await parkingManager.reserveSpot('123', { first_name: 'Test' }, nextMonday);
+            // Use QueueManager since it has the next-week booking restrictions
+            const QueueManager = require('../../src/queueManager');
+            const queueManager = new QueueManager(db, bot);
+            
+            const result = await queueManager.handleReservation('123', { first_name: 'Test' }, nextMonday);
             
             // Should be rejected because it's Wednesday and next week booking not allowed
             expect(result.success).toBe(false);

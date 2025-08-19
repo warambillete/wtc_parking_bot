@@ -180,15 +180,27 @@ describe('Fixed Spaces Feature Tests', () => {
     describe('Waitlist Removal on Release', () => {
         test('should remove user from waitlist when saying libero without reservation', async () => {
             const tomorrow = moment().add(1, 'day');
+            if (tomorrow.day() === 0) tomorrow.add(1, 'day'); // Skip Sunday
+            if (tomorrow.day() === 6) tomorrow.add(2, 'days'); // Skip Saturday
             const tomorrowStr = tomorrow.format('YYYY-MM-DD');
-            const userId = '999';
+            const userId = 'test_user_999';
+            
+            // Ensure user has no existing reservation
+            const existingReservation = await db.getReservation(userId, tomorrowStr);
+            expect(existingReservation).toBeFalsy();
             
             // Add user to waitlist (no reservation)
-            await db.addToWaitlist(userId, { first_name: 'TestUser', username: 'testuser' }, tomorrowStr);
+            const addResult = await db.addToWaitlist(userId, { first_name: 'TestUser', username: 'testuser' }, tomorrowStr);
+            expect(addResult).toBeGreaterThan(0);
             
             // Verify user is in waitlist
             let waitlistCount = await db.getWaitlistCount(tomorrowStr);
             expect(waitlistCount).toBe(1);
+            
+            // Verify user is actually in the waitlist
+            const waitlistUser = await db.getWaitlistUser(userId, tomorrowStr);
+            expect(waitlistUser).toBeTruthy();
+            expect(waitlistUser.user_id).toBe(userId);
             
             // Simulate "libero" command (user tries to release but has no reservation)
             const removed = await db.removeFromWaitlist(userId, tomorrowStr);

@@ -277,6 +277,14 @@ class WTCParkBotWebhook {
             
             await this.handleReassignFreedSpaces(chatId);
         }
+        else if (text === '/assign') {
+            if (!this.isSupervisor(userId)) {
+                await this.bot.sendMessage(chatId, '❌ No tienes permisos para ejecutar este comando');
+                return;
+            }
+            
+            await this.handleAssignAvailableSpots(chatId);
+        }
         else if (text === '/helpsuper') {
             const helpText = `🔧 *Comandos de Administrador:*
 
@@ -291,6 +299,7 @@ class WTCParkBotWebhook {
 🗑️ *Gestión:*
 • \`/clear\` - Limpiar todas las reservas
 • \`/reassign\` - Reasignar espacios fijos liberados a lista de espera
+• \`/assign\` - Asignar espacios disponibles a personas en lista de espera
 
 ℹ️ *Formato espacios fijos:*
 \`/setfixed NUMERO1,NUMERO2,NUMERO3\`
@@ -900,6 +909,89 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
         } catch (error) {
             console.error('Error in handleReassignFreedSpaces:', error);
             await this.bot.sendMessage(chatId, `❌ Error durante la reasignación: ${error.message}`);
+        }
+    }
+    
+    async handleAssignAvailableSpots(chatId) {
+        try {
+            await this.bot.sendMessage(chatId, '🔄 Iniciando asignación de espacios disponibles a lista de espera...');
+            
+            const moment = require('moment-timezone');
+            const now = moment().tz('America/Montevideo');
+            const futureDate = now.clone().add(7, 'days'); // Check next week
+            
+            let totalAssignments = 0;
+            const assignmentResults = [];
+            
+            for (let currentDate = now.clone(); currentDate.isBefore(futureDate, 'day'); currentDate.add(1, 'day')) {
+                // Skip weekends
+                if (currentDate.day() === 0 || currentDate.day() === 6) continue;
+                
+                const dateStr = currentDate.format('YYYY-MM-DD');
+                const dayName = currentDate.format('dddd DD/MM');
+                
+                // Check if there are people waiting
+                const waitlistUsers = await this.db.getWaitlistForDate(dateStr);
+                if (waitlistUsers.length === 0) continue;
+                
+                // Check for available spots
+                const availableSpot = await this.db.getAvailableSpot(dateStr);
+                if (!availableSpot) continue;
+                
+                // Assign to first person in waitlist
+                const nextUser = waitlistUsers[0];
+                const name = nextUser.first_name || nextUser.username || 'Unknown';
+                
+                try {
+                    // Check if user already has a reservation for this date
+                    const existingReservation = await this.db.getReservation(nextUser.user_id, dateStr);
+                    
+                    if (!existingReservation) {
+                        await this.db.createReservation(nextUser.user_id, nextUser, dateStr, availableSpot.number);
+                        await this.db.removeFromWaitlist(nextUser.user_id, dateStr);
+                        
+                        assignmentResults.push({
+                            date: dayName,
+                            spot: availableSpot.number,
+                            user: name
+                        });
+                        
+                        totalAssignments++;
+                        
+                        // Send notification to user
+                        try {
+                            await this.bot.sendMessage(nextUser.user_id, 
+                                `🎉 ¡Buenas noticias! Se te ha asignado el estacionamiento ${availableSpot.number} para ${dayName}`);
+                        } catch (error) {
+                            console.log(`Could not notify user ${nextUser.user_id}: ${error.message}`);
+                        }
+                    } else {
+                        // User already has a reservation, remove from waitlist
+                        await this.db.removeFromWaitlist(nextUser.user_id, dateStr);
+                    }
+                } catch (error) {
+                    console.error(`Error assigning spot for ${dateStr}:`, error);
+                }
+            }
+            
+            // Send summary to supervisor
+            let summary = `📊 *Resumen de Asignaciones:*\n\n`;
+            summary += `✅ Asignaciones realizadas: ${totalAssignments}\n`;
+            
+            if (assignmentResults.length > 0) {
+                summary += `\n🎯 Detalles:\n`;
+                assignmentResults.forEach(result => {
+                    summary += `• ${result.date}: Espacio ${result.spot} → ${result.user}\n`;
+                });
+            } else {
+                summary += `\nℹ️ No había espacios disponibles para asignar o no hay personas en lista de espera.`;
+            }
+            
+            await this.bot.sendMessage(chatId, summary, { parse_mode: 'Markdown' });
+            
+        } catch (error) {
+            console.error('Error in handleAssignAvailableSpots:', error);
+            await this.bot.sendMessage(chatId, `❌ Error durante la asignación: ${error.message}`);
         }
     }
 }

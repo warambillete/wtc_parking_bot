@@ -155,11 +155,28 @@ describe('ParkingManager Integration Tests', () => {
             const status = await parkingManager.getWeekStatus();
             const statusDates = Object.keys(status);
             
-            // Use the first date from the status (should be Monday)
-            const firstDate = moment(statusDates[0]);
+            // Find a valid weekday date from the status
+            let firstDate;
+            for (const dateStr of statusDates) {
+                const testDate = moment(dateStr);
+                const now = moment().tz('America/Montevideo');
+                // Use a date that's today or future and not weekend
+                if (testDate.isSameOrAfter(now, 'day') && testDate.day() !== 0 && testDate.day() !== 6) {
+                    firstDate = testDate;
+                    break;
+                }
+            }
+            
+            // If no valid date found, use tomorrow (ensure it's not weekend)
+            if (!firstDate) {
+                firstDate = moment().tz('America/Montevideo').add(1, 'day');
+                if (firstDate.day() === 0) firstDate.add(1, 'day'); // Skip Sunday
+                if (firstDate.day() === 6) firstDate.add(2, 'days'); // Skip Saturday
+            }
             
             // Make a reservation for that date
-            await parkingManager.reserveSpot(userId, user, firstDate);
+            const reservationResult = await parkingManager.reserveSpot(userId, user, firstDate);
+            expect(reservationResult.success).toBe(true);
 
             // Get week status again
             const updatedStatus = await parkingManager.getWeekStatus();
