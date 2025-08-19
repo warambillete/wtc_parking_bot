@@ -269,6 +269,14 @@ class WTCParkBotWebhook {
                 await this.bot.sendMessage(chatId, '❌ No se pudo procesar ningún espacio fijo');
             }
         }
+        else if (text === '/reassign') {
+            if (!this.isSupervisor(userId)) {
+                await this.bot.sendMessage(chatId, '❌ No tienes permisos para ejecutar este comando');
+                return;
+            }
+            
+            await this.handleReassignFreedSpaces(chatId);
+        }
         else if (text === '/helpsuper') {
             const helpText = `🔧 *Comandos de Administrador:*
 
@@ -282,6 +290,7 @@ class WTCParkBotWebhook {
 
 🗑️ *Gestión:*
 • \`/clear\` - Limpiar todas las reservas
+• \`/reassign\` - Reasignar espacios fijos liberados a lista de espera
 
 ℹ️ *Formato espacios fijos:*
 \`/setfixed NUMERO1,NUMERO2,NUMERO3\`
@@ -555,8 +564,29 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
             
             await this.db.releaseFixedSpot(intent.spotNumber, startDateStr, endDateStr);
             
-            await this.bot.sendMessage(chatId, 
-                `✅ Espacio ${intent.spotNumber} liberado desde ${intent.startDate.format('dddd DD/MM')} hasta ${intent.endDate.format('dddd DD/MM')}`);
+            // Process each day in the range to notify waitlist
+            const currentDate = intent.startDate.clone();
+            const notificationResults = [];
+            
+            while (currentDate.isSameOrBefore(intent.endDate, 'day')) {
+                // Skip weekends
+                if (currentDate.day() !== 0 && currentDate.day() !== 6) {
+                    // Notify waitlist for this specific date
+                    const notified = await this.queueManager.notifyWaitlist(currentDate, intent.spotNumber);
+                    if (notified) {
+                        notificationResults.push(currentDate.format('dddd DD/MM'));
+                    }
+                }
+                currentDate.add(1, 'day');
+            }
+            
+            let responseMessage = `✅ Espacio ${intent.spotNumber} liberado desde ${intent.startDate.format('dddd DD/MM')} hasta ${intent.endDate.format('dddd DD/MM')}`;
+            
+            if (notificationResults.length > 0) {
+                responseMessage += `\n\n📢 Se asignó el espacio a personas en lista de espera para: ${notificationResults.join(', ')}`;
+            }
+            
+            await this.bot.sendMessage(chatId, responseMessage);
             
         } catch (error) {
             console.error('Error releasing fixed spot:', error);
@@ -765,6 +795,112 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
         
         process.on('SIGTERM', () => shutdown('SIGTERM'));
         process.on('SIGINT', () => shutdown('SIGINT'));
+    }
+    
+    async handleReassignFreedSpaces(chatId) {
+        try {
+            await this.bot.sendMessage(chatId, '🔄 Iniciando proceso de reasignación de espacios liberados...');
+            
+            const moment = require('moment-timezone');
+            
+            // Get all released fixed spots for future dates
+            const releasedSpots = await this.db.query(`
+                SELECT DISTINCT fsr.spot_number, fsr.start_date, fsr.end_date
+                FROM fixed_spot_releases fsr
+                WHERE fsr.end_date >= date('now')
+                ORDER BY fsr.start_date
+            `);
+            
+            if (!releasedSpots || releasedSpots.length === 0) {
+                await this.bot.sendMessage(chatId, '✅ No hay espacios fijos liberados pendientes de asignar.');
+                return;
+            }
+            
+            let totalReassigned = 0;
+            let issues = [];
+            
+            for (const release of releasedSpots) {
+                const startDate = moment(release.start_date);
+                const endDate = moment(release.end_date);
+                const currentDate = startDate.clone();
+                
+                while (currentDate.isSameOrBefore(endDate, 'day')) {
+                    // Skip weekends and past dates
+                    const now = moment().tz('America/Montevideo').startOf('day');
+                    if (currentDate.day() === 0 || currentDate.day() === 6 || currentDate.isBefore(now, 'day')) {
+                        currentDate.add(1, 'day');
+                        continue;
+                    }
+                    
+                    const dateStr = currentDate.format('YYYY-MM-DD');
+                    
+                    // Check if this spot is actually available (not reserved)
+                    const reservation = await this.db.query(`
+                        SELECT * FROM reservations 
+                        WHERE date = ? AND spot_number = ?
+                    `, [dateStr, release.spot_number]);
+                    
+                    // IMPORTANT: Only reassign if spot is NOT already reserved
+                    if (!reservation || reservation.length === 0) {
+                        // Space is free, check waitlist
+                        const waitlistUsers = await this.db.getWaitlistForDate(dateStr);
+                        
+                        if (waitlistUsers.length > 0) {
+                            const nextUser = waitlistUsers[0];
+                            
+                            try {
+                                // Check if user already has a reservation for this date
+                                const existingReservation = await this.db.getReservation(nextUser.user_id, dateStr);
+                                
+                                if (!existingReservation) {
+                                    await this.db.createReservation(
+                                        nextUser.user_id, 
+                                        nextUser, 
+                                        dateStr, 
+                                        release.spot_number
+                                    );
+                                    await this.db.removeFromWaitlist(nextUser.user_id, dateStr);
+                                    
+                                    totalReassigned++;
+                                    
+                                    // Notify the user
+                                    try {
+                                        await this.bot.sendMessage(nextUser.user_id, 
+                                            `🎉 ¡Buenas noticias! Se te ha asignado el estacionamiento ${release.spot_number} para ${currentDate.format('dddd DD/MM')}`);
+                                    } catch (error) {
+                                        console.log(`Could not notify user ${nextUser.user_id}: ${error.message}`);
+                                    }
+                                } else {
+                                    // User already has a reservation, skip to next in waitlist
+                                    await this.db.removeFromWaitlist(nextUser.user_id, dateStr);
+                                }
+                            } catch (error) {
+                                issues.push(`${currentDate.format('DD/MM')}: ${error.message}`);
+                            }
+                        }
+                    }
+                    
+                    currentDate.add(1, 'day');
+                }
+            }
+            
+            // Send summary
+            let summary = `📊 *Resumen de Reasignación:*\n\n`;
+            summary += `✅ Espacios reasignados: ${totalReassigned}\n`;
+            
+            if (issues.length > 0) {
+                summary += `\n⚠️ Problemas encontrados:\n`;
+                issues.forEach(issue => {
+                    summary += `• ${issue}\n`;
+                });
+            }
+            
+            await this.bot.sendMessage(chatId, summary, { parse_mode: 'Markdown' });
+            
+        } catch (error) {
+            console.error('Error in handleReassignFreedSpaces:', error);
+            await this.bot.sendMessage(chatId, `❌ Error durante la reasignación: ${error.message}`);
+        }
     }
 }
 

@@ -6,7 +6,25 @@ class ParkingManager {
 	}
 
 	async reserveSpot(userId, user, date) {
+		const moment = require('moment-timezone');
+		const now = moment().tz('America/Montevideo');
 		const dateStr = date.format("YYYY-MM-DD");
+		
+		// Check if trying to reserve for a past date
+		if (date.isBefore(now, 'day')) {
+			return {
+				success: false,
+				message: `No puedes hacer reservas para fechas pasadas. La fecha ${date.format('dddd DD/MM')} ya ha pasado.`
+			};
+		}
+		
+		// Check if trying to reserve for weekend
+		if (date.day() === 0 || date.day() === 6) {
+			return {
+				success: false,
+				message: `No se pueden hacer reservas para fines de semana. Solo días laborables (lunes a viernes).`
+			};
+		}
 
 		// Verificar si el usuario ya tiene reserva para ese día
 		const existing = await this.db.getReservation(userId, dateStr);
@@ -220,14 +238,18 @@ class ParkingManager {
 				responseText += `⚠️ No hay espacios configurados\n`;
 			}
 
-			// Add waitlist information
+			// Add waitlist information with names
 			try {
-				const waitlistCount = await this.db.getWaitlistCount(dateStr);
-				if (waitlistCount > 0) {
-					responseText += `📝 En lista de espera: ${waitlistCount} persona${waitlistCount > 1 ? 's' : ''}\n`;
+				const waitlistUsers = await this.db.getWaitlistForDate(dateStr);
+				if (waitlistUsers.length > 0) {
+					responseText += `📝 En espera:\n`;
+					waitlistUsers.forEach((user) => {
+						const name = user.first_name || user.username || 'Usuario';
+						responseText += `   • ?: ${name} (en espera)\n`;
+					});
 				}
 			} catch (error) {
-				console.error('Error getting waitlist count for', dateStr, ':', error);
+				console.error('Error getting waitlist for', dateStr, ':', error);
 			}
 
 			responseText += "\n";

@@ -617,6 +617,19 @@ class Database {
         });
     }
     
+    async getWaitlistForDate(date) {
+        return new Promise((resolve, reject) => {
+            this.db.all(
+                'SELECT * FROM waitlist WHERE date = ? ORDER BY position',
+                [date],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                }
+            );
+        });
+    }
+    
     async clearAllReservations() {
         return new Promise((resolve, reject) => {
             this.db.serialize(() => {
@@ -888,6 +901,16 @@ class Database {
                     console.log('Base de datos cerrada');
                 }
             }
+        });
+    }
+    
+    // Helper method for raw queries
+    query(sql, params = []) {
+        return new Promise((resolve, reject) => {
+            this.db.all(sql, params, (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
         });
     }
 }
