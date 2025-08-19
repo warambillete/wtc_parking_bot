@@ -85,13 +85,14 @@ class Database {
             // Migrate fixed_spot_releases table if needed
             this.migrateFixedSpotReleasesTable();
             
-            // Índices para mejor rendimiento
+            // Índices para mejor rendimiento (basic tables)
             this.db.run(`CREATE INDEX IF NOT EXISTS idx_reservations_date ON reservations(date)`);
             this.db.run(`CREATE INDEX IF NOT EXISTS idx_reservations_user ON reservations(user_id)`);
             this.db.run(`CREATE INDEX IF NOT EXISTS idx_waitlist_date ON waitlist(date)`);
             this.db.run(`CREATE INDEX IF NOT EXISTS idx_waitlist_position ON waitlist(date, position)`);
-            this.db.run(`CREATE INDEX IF NOT EXISTS idx_fixed_releases_spot ON fixed_spot_releases(spot_number)`);
-            this.db.run(`CREATE INDEX IF NOT EXISTS idx_fixed_releases_dates ON fixed_spot_releases(start_date, end_date)`);
+            
+            // Create indexes for fixed tables after migration (in a separate serialize block)
+            this.createFixedTableIndexes();
         });
         
         if (process.env.NODE_ENV !== 'test') {
@@ -254,6 +255,24 @@ class Database {
                 }
             });
         });
+    }
+    
+    createFixedTableIndexes() {
+        // Wait a bit to ensure tables are created, then create indexes
+        setTimeout(() => {
+            this.db.serialize(() => {
+                this.db.run(`CREATE INDEX IF NOT EXISTS idx_fixed_releases_spot ON fixed_spot_releases(spot_number)`, (err) => {
+                    if (err && !err.message.includes('no such table')) {
+                        console.error('Error creating fixed releases spot index:', err);
+                    }
+                });
+                this.db.run(`CREATE INDEX IF NOT EXISTS idx_fixed_releases_dates ON fixed_spot_releases(start_date, end_date)`, (err) => {
+                    if (err && !err.message.includes('no such table')) {
+                        console.error('Error creating fixed releases dates index:', err);
+                    }
+                });
+            });
+        }, 100);
     }
     
     // Métodos para espacios de estacionamiento
@@ -487,41 +506,60 @@ class Database {
     // Métodos para lista de espera
     async addToWaitlist(userId, user, date) {
         return new Promise((resolve, reject) => {
-            // Primero verificar si el usuario ya está en la lista de espera
+            // First check if user already has a reservation for this date
             this.db.get(
-                'SELECT id FROM waitlist WHERE user_id = ? AND date = ?',
+                'SELECT * FROM reservations WHERE user_id = ? AND date = ?',
                 [userId, date],
-                (err, existing) => {
+                (err, reservation) => {
                     if (err) {
                         reject(err);
                         return;
                     }
                     
-                    // Si ya está en la lista, retornar el ID existente
-                    if (existing) {
-                        console.log(`User ${userId} already in waitlist for ${date}`);
-                        resolve(existing.id);
+                    // If user already has a reservation, don't add to waitlist
+                    if (reservation) {
+                        console.log(`User ${userId} already has reservation for ${date}, not adding to waitlist`);
+                        resolve(-1); // Return -1 to indicate not added
                         return;
                     }
                     
-                    // Si no está, obtener la siguiente posición y agregarlo
+                    // Now check if already in waitlist
                     this.db.get(
-                        'SELECT COALESCE(MAX(position), 0) + 1 as next_position FROM waitlist WHERE date = ?',
-                        [date],
-                        (err, result) => {
+                        'SELECT id FROM waitlist WHERE user_id = ? AND date = ?',
+                        [userId, date],
+                        (err, existing) => {
                             if (err) {
                                 reject(err);
                                 return;
                             }
                             
-                            const position = result.next_position;
-                            this.db.run(
-                                `INSERT INTO waitlist (user_id, username, first_name, last_name, date, position) 
-                                 VALUES (?, ?, ?, ?, ?, ?)`,
-                                [userId, user.username, user.first_name, user.last_name, date, position],
-                                function(err) {
-                                    if (err) reject(err);
-                                    else resolve(this.lastID);
+                            // Si ya está en la lista, retornar el ID existente
+                            if (existing) {
+                                console.log(`User ${userId} already in waitlist for ${date}`);
+                                resolve(existing.id);
+                                return;
+                            }
+                            
+                            // Si no está, obtener la siguiente posición y agregarlo
+                            this.db.get(
+                                'SELECT COALESCE(MAX(position), 0) + 1 as next_position FROM waitlist WHERE date = ?',
+                                [date],
+                                (err, result) => {
+                                    if (err) {
+                                        reject(err);
+                                        return;
+                                    }
+                                    
+                                    const position = result.next_position;
+                                    this.db.run(
+                                        `INSERT INTO waitlist (user_id, username, first_name, last_name, date, position) 
+                                         VALUES (?, ?, ?, ?, ?, ?)`,
+                                        [userId, user.username, user.first_name, user.last_name, date, position],
+                                        function(err) {
+                                            if (err) reject(err);
+                                            else resolve(this.lastID);
+                                        }
+                                    );
                                 }
                             );
                         }
