@@ -113,6 +113,9 @@ class WTCParkBotWebhook {
         
         // Setup automatic cleanup scheduler
         this.setupAutomaticCleanup();
+        
+        // Check if auto-reservation needs to be done on startup
+        this.checkAndPerformAutoReservation();
     }
     
     setupHandlers() {
@@ -697,10 +700,17 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
                                 last_name: 'Arambillete'
                             };
                             
-                            // Try to reserve the entire next week
+                            // Reserve based on AUTOMATIC_RESERVATION_FULL_WEEK setting
                             const weekDays = [];
-                            for (let i = 0; i < 5; i++) {
-                                weekDays.push(nextMonday.clone().add(i, 'days').format('YYYY-MM-DD'));
+                            if (this.automaticReservationFullWeek) {
+                                // Reserve entire week (Monday to Friday)
+                                for (let i = 0; i < 5; i++) {
+                                    weekDays.push(nextMonday.clone().add(i, 'days').format('YYYY-MM-DD'));
+                                }
+                            } else {
+                                // Only reserve for next Friday when FULL_WEEK=false
+                                const nextFriday = nextMonday.clone().add(4, 'days');
+                                weekDays.push(nextFriday.format('YYYY-MM-DD'));
                             }
                             
                             // Silently perform automatic reservations
@@ -769,6 +779,123 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
         
         // Only start Friday reset scheduler - no daily cleanup
         scheduleNextFridayReset();
+    }
+    
+    async checkAndPerformAutoReservation() {
+        // Check if auto-reservation should be performed on startup
+        if (!this.supervisorId || !this.automaticReservationEnabled) {
+            return;
+        }
+        
+        const now = moment().tz('America/Montevideo');
+        
+        // Check if we're after Friday 17:00 (i.e., in the period where next week should be reserved)
+        const isAfterFridayReset = (now.day() === 5 && now.hour() >= 17) || now.day() === 6 || now.day() === 0;
+        
+        if (!isAfterFridayReset) {
+            console.log('⏰ Not after Friday 17:00 reset, skipping auto-reservation check');
+            return;
+        }
+        
+        try {
+            // Get next Monday date
+            const nextMonday = moment().tz('America/Montevideo').add(1, 'week').startOf('isoWeek');
+            
+            // Check which days to reserve based on AUTOMATIC_RESERVATION_FULL_WEEK setting
+            const datesToCheck = [];
+            if (this.automaticReservationFullWeek) {
+                // Check entire week
+                for (let i = 0; i < 5; i++) {
+                    datesToCheck.push(nextMonday.clone().add(i, 'days').format('YYYY-MM-DD'));
+                }
+            } else {
+                // Only check Friday
+                const nextFriday = nextMonday.clone().add(4, 'days');
+                datesToCheck.push(nextFriday.format('YYYY-MM-DD'));
+            }
+            
+            // Check if supervisor already has reservations for these dates
+            let needsReservation = false;
+            for (const date of datesToCheck) {
+                const existingReservation = await this.db.getReservation(this.supervisorId, date);
+                if (!existingReservation) {
+                    needsReservation = true;
+                    break;
+                }
+            }
+            
+            if (!needsReservation) {
+                console.log('✅ Auto-reservation already exists for supervisor');
+                return;
+            }
+            
+            console.log('🔄 Performing auto-reservation on startup (after Friday 17:00)...');
+            
+            // Create supervisor user object
+            const supervisorUser = {
+                username: 'warambillete',
+                first_name: 'Wilman',
+                last_name: 'Arambillete'
+            };
+            
+            // Perform reservations
+            const weekDays = datesToCheck;
+            let reservedDays = [];
+            
+            for (const date of weekDays) {
+                // Check if preferred spot is available
+                const spots = await this.db.getParkingSpots();
+                const preferredSpotExists = spots.some(spot => spot.number === this.automaticReservationPreferredSpot);
+                
+                let spotToReserve = null;
+                
+                if (preferredSpotExists) {
+                    // Check if preferred spot is available for this date
+                    const reservations = await this.db.getReservationsByDate(date);
+                    const isPreferredSpotReserved = reservations.some(res => res.spot_number === this.automaticReservationPreferredSpot);
+                    
+                    if (!isPreferredSpotReserved) {
+                        spotToReserve = this.automaticReservationPreferredSpot;
+                    }
+                }
+                
+                // If preferred spot is not available or doesn't exist, get any available spot
+                if (!spotToReserve) {
+                    const availableSpot = await this.db.getAvailableSpot(date);
+                    if (availableSpot) {
+                        spotToReserve = availableSpot;
+                    }
+                }
+                
+                // Make the reservation
+                if (spotToReserve) {
+                    try {
+                        const existingReservation = await this.db.getReservation(this.supervisorId, date);
+                        if (!existingReservation) {
+                            await this.db.createReservation(this.supervisorId, supervisorUser, date, spotToReserve);
+                            const dateFormatted = moment(date).format('dddd DD/MM');
+                            reservedDays.push(`${dateFormatted}: Espacio ${spotToReserve}`);
+                            console.log(`✅ Auto-reserved spot ${spotToReserve} for ${date}`);
+                        }
+                    } catch (err) {
+                        console.error(`Error auto-reserving for ${date}:`, err);
+                    }
+                }
+            }
+            
+            // Notify supervisor if reservations were made
+            if (reservedDays.length > 0) {
+                try {
+                    await this.bot.sendMessage(this.supervisorId, 
+                        `🔄 Auto-reservación completada en el arranque del bot:\n\n${reservedDays.join('\n')}`);
+                } catch (error) {
+                    console.error('Error sending auto-reservation notification:', error);
+                }
+            }
+            
+        } catch (error) {
+            console.error('Error during startup auto-reservation check:', error);
+        }
     }
     
     setupGracefulShutdown() {
