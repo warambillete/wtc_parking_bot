@@ -370,6 +370,24 @@ class QueueManager {
             console.log(`📢 Notificando a ${nextInLine.first_name || nextInLine.username} sobre espacio liberado`);
             
             try {
+                // Check if user already has a reservation for this date
+                const existingReservation = await this.db.getReservation(nextInLine.user_id, dateStr);
+                if (existingReservation) {
+                    console.log(`User ${nextInLine.user_id} already has a reservation for ${dateStr}, removing from waitlist`);
+                    await this.db.removeFromWaitlist(nextInLine.user_id, dateStr);
+                    // Try next person in waitlist recursively
+                    return await this.notifyWaitlist(date, spotNumber);
+                }
+                
+                // Check if the spot is actually available (important for fixed spots)
+                const reservationsForDate = await this.db.getReservationsByDate(dateStr);
+                const spotAlreadyReserved = reservationsForDate.some(r => r.spot_number === spotNumber);
+                
+                if (spotAlreadyReserved) {
+                    console.log(`⚠️ Spot ${spotNumber} is already reserved for ${dateStr}, cannot assign from waitlist`);
+                    return false;
+                }
+                
                 // Assign the spot to the next person in waitlist
                 await this.db.createReservation(nextInLine.user_id, nextInLine, dateStr, spotNumber);
                 await this.db.removeFromWaitlist(nextInLine.user_id, dateStr);
