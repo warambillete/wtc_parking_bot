@@ -355,7 +355,8 @@ class MessageProcessor {
             if (startDate.isBefore(now, 'day')) {
                 startDate.add(1, 'week');
             }
-            const endDate = startDate.clone().add(weeks, 'weeks').day(5); // End on Friday
+            // For N weeks, end date should be N-1 weeks after start, then set to Friday
+            const endDate = startDate.clone().add(weeks - 1, 'weeks').day(5); // End on Friday
             
             return { 
                 type: 'FIXED_RELEASE', 
