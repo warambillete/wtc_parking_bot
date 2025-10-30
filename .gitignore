@@ -4,6 +4,12 @@ data/parking.db
 *.log
 .DS_Store
 
+# AI Assistant configuration files
+.clauderules
+.cursorrules
+.aider*
+.claude/
+
 # Logs
 logs
 npm-debug.log*

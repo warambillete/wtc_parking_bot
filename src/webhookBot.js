@@ -1,295 +1,372 @@
-const TelegramBot = require('node-telegram-bot-api');
-const express = require('express');
-const moment = require('moment-timezone');
-const Database = require('./database');
-const MessageProcessor = require('./messageProcessor');
-const ParkingManager = require('./parkingManager');
-const QueueManager = require('./queueManager');
+const TelegramBot = require("node-telegram-bot-api");
+const express = require("express");
+const moment = require("moment-timezone");
+const Database = require("./database");
+const MessageProcessor = require("./messageProcessor");
+const ParkingManager = require("./parkingManager");
+const QueueManager = require("./queueManager");
 
-moment.locale('es');
-moment.tz.setDefault('America/Montevideo');
+moment.locale("es");
+moment.tz.setDefault("America/Montevideo");
 
 class WTCParkBotWebhook {
-    constructor() {
-        this.token = process.env.TELEGRAM_BOT_TOKEN;
-        this.supervisorId = process.env.SUPERVISOR_USER_ID;
-        
-        // Automatic Reservation configuration
-        this.automaticReservationEnabled = process.env.AUTOMATIC_RESERVATION_ENABLED === 'true';
-        this.automaticReservationPreferredSpot = process.env.AUTOMATIC_RESERVATION_PREFERRED_SPOT || '1058';
-        this.automaticReservationFullWeek = process.env.AUTOMATIC_RESERVATION_FULL_WEEK !== 'false';
-        
-        if (!this.token) {
-            throw new Error('TELEGRAM_BOT_TOKEN no está configurado');
-        }
+  constructor() {
+    this.token = process.env.TELEGRAM_BOT_TOKEN;
+    // Parse supervisorId as integer to ensure type consistency
+    // Auto-reservations are created with numeric user_id, and msg.from.id is also numeric
+    // This prevents issues when releasing auto-reserved spots (e.g., "libero el viernes")
+    this.supervisorId = parseInt(process.env.SUPERVISOR_USER_ID);
 
-        console.log('🚀 Starting WTC Parking Bot (WEBHOOK MODE)...');
-        if (this.automaticReservationEnabled) {
-            console.log('✅ Automatic Reservation feature enabled');
-            console.log(`   - Preferred spot: ${this.automaticReservationPreferredSpot}`);
-            console.log(`   - Full week reservation: ${this.automaticReservationFullWeek}`);
-        }
-        this.initializeBot();
+    // Automatic Reservation configuration
+    this.automaticReservationEnabled =
+      process.env.AUTOMATIC_RESERVATION_ENABLED === "true";
+    this.automaticReservationPreferredSpot =
+      process.env.AUTOMATIC_RESERVATION_PREFERRED_SPOT || "1058";
+    this.automaticReservationFullWeek =
+      process.env.AUTOMATIC_RESERVATION_FULL_WEEK !== "false";
+
+    if (!this.token) {
+      throw new Error("TELEGRAM_BOT_TOKEN no está configurado");
     }
-    
-    async initializeBot() {
-        // Initialize bot WITHOUT polling (webhooks only)
-        this.bot = new TelegramBot(this.token, { polling: false });
-        
-        // Initialize database and managers
-        this.db = new Database();
-        await this.db.init();
-        
-        this.messageProcessor = new MessageProcessor();
-        this.parkingManager = new ParkingManager(this.db);
-        this.queueManager = new QueueManager(this.db, this.bot, this.parkingManager);
-        
-        // Set up Express server for webhooks
-        this.app = express();
-        this.app.use(express.json());
-        
-        // Health check endpoint
-        this.app.get('/', (req, res) => {
-            res.json({ 
-                status: 'running', 
-                bot: 'WTC Parking Bot',
-                mode: 'webhook',
-                timestamp: new Date().toISOString()
-            });
-        });
-        
-        // Webhook endpoint
-        this.app.post(`/webhook/${this.token}`, (req, res) => {
-            console.log('📨 Webhook received:', JSON.stringify(req.body));
-            this.bot.processUpdate(req.body);
-            res.sendStatus(200);
-        });
-        
-        // Set up event handlers
-        this.setupHandlers();
-        
-        // Start server
-        const port = process.env.PORT || 3000;
-        this.server = this.app.listen(port, async () => {
-            console.log(`🌐 Webhook server running on port ${port}`);
-            
-            // Auto-detect webhook URL
-            let webhookUrl = process.env.RENDER_EXTERNAL_URL;
-            
-            if (!webhookUrl) {
-                // Try to auto-detect from Render environment
-                const serviceName = process.env.RENDER_SERVICE_NAME;
-                if (serviceName) {
-                    webhookUrl = `https://${serviceName}.onrender.com`;
-                    console.log(`🔍 Auto-detected webhook URL: ${webhookUrl}`);
-                } else {
-                    webhookUrl = `https://your-app.onrender.com`;
-                    console.log('⚠️ Could not auto-detect URL. Please set RENDER_EXTERNAL_URL environment variable.');
-                }
-            }
-            
-            const fullWebhookUrl = `${webhookUrl}/webhook/${this.token}`;
-            
-            try {
-                // Delete any existing webhook first
-                await this.bot.deleteWebHook();
-                console.log('🗑️ Deleted existing webhook');
-                
-                // Set new webhook
-                await this.bot.setWebHook(fullWebhookUrl);
-                console.log(`✅ Webhook set to: ${fullWebhookUrl}`);
-                
-                // Verify webhook
-                const webhookInfo = await this.bot.getWebHookInfo();
-                console.log('📡 Webhook info:', JSON.stringify(webhookInfo, null, 2));
-                
-            } catch (error) {
-                console.error('❌ Error setting webhook:', error);
-            }
-        });
-        
-        // Handle graceful shutdown
-        this.setupGracefulShutdown();
-        
-        // Setup automatic cleanup scheduler
-        this.setupAutomaticCleanup();
-        
-        // Check if auto-reservation needs to be done on startup
-        this.checkAndPerformAutoReservation();
+
+    console.log("🚀 Starting WTC Parking Bot (WEBHOOK MODE)...");
+    if (this.automaticReservationEnabled) {
+      console.log("✅ Automatic Reservation feature enabled");
+      console.log(
+        `   - Preferred spot: ${this.automaticReservationPreferredSpot}`,
+      );
+      console.log(
+        `   - Full week reservation: ${this.automaticReservationFullWeek}`,
+      );
     }
-    
-    setupHandlers() {
-        // Handle text messages
-        this.bot.on('message', async (msg) => {
-            if (msg.text) {
-                await this.handleTextMessage(msg);
-            }
-        });
-        
-        // Handle callback queries (inline keyboard buttons)
-        this.bot.on('callback_query', async (query) => {
-            await this.handleCallbackQuery(query);
-        });
-        
-        // Handle polling errors (shouldn't happen in webhook mode)
-        this.bot.on('polling_error', (error) => {
-            console.error('❌ Polling error (unexpected in webhook mode):', error);
-        });
-        
-        // Handle webhook errors
-        this.bot.on('webhook_error', (error) => {
-            console.error('❌ Webhook error:', error);
-        });
+    this.initializeBot();
+  }
+
+  async initializeBot() {
+    // Initialize bot WITHOUT polling (webhooks only)
+    this.bot = new TelegramBot(this.token, { polling: false });
+
+    // Initialize database and managers
+    this.db = new Database();
+    await this.db.init();
+
+    this.messageProcessor = new MessageProcessor();
+    this.parkingManager = new ParkingManager(this.db);
+    this.queueManager = new QueueManager(
+      this.db,
+      this.bot,
+      this.parkingManager,
+    );
+
+    // Set up Express server for webhooks
+    this.app = express();
+    this.app.use(express.json());
+
+    // Health check endpoint
+    this.app.get("/", (req, res) => {
+      res.json({
+        status: "running",
+        bot: "WTC Parking Bot",
+        mode: "webhook",
+        timestamp: new Date().toISOString(),
+      });
+    });
+
+    // Webhook endpoint
+    this.app.post(`/webhook/${this.token}`, (req, res) => {
+      console.log("📨 Webhook received:", JSON.stringify(req.body));
+      this.bot.processUpdate(req.body);
+      res.sendStatus(200);
+    });
+
+    // Set up event handlers
+    this.setupHandlers();
+
+    // Start server
+    const port = process.env.PORT || 3000;
+    this.server = this.app.listen(port, async () => {
+      console.log(`🌐 Webhook server running on port ${port}`);
+
+      // Auto-detect webhook URL
+      let webhookUrl = process.env.RENDER_EXTERNAL_URL;
+
+      if (!webhookUrl) {
+        // Try to auto-detect from Render environment
+        const serviceName = process.env.RENDER_SERVICE_NAME;
+        if (serviceName) {
+          webhookUrl = `https://${serviceName}.onrender.com`;
+          console.log(`🔍 Auto-detected webhook URL: ${webhookUrl}`);
+        } else {
+          webhookUrl = `https://your-app.onrender.com`;
+          console.log(
+            "⚠️ Could not auto-detect URL. Please set RENDER_EXTERNAL_URL environment variable.",
+          );
+        }
+      }
+
+      const fullWebhookUrl = `${webhookUrl}/webhook/${this.token}`;
+
+      try {
+        // Delete any existing webhook first
+        await this.bot.deleteWebHook();
+        console.log("🗑️ Deleted existing webhook");
+
+        // Set new webhook
+        await this.bot.setWebHook(fullWebhookUrl);
+        console.log(`✅ Webhook set to: ${fullWebhookUrl}`);
+
+        // Verify webhook
+        const webhookInfo = await this.bot.getWebHookInfo();
+        console.log("📡 Webhook info:", JSON.stringify(webhookInfo, null, 2));
+      } catch (error) {
+        console.error("❌ Error setting webhook:", error);
+      }
+    });
+
+    // Handle graceful shutdown
+    this.setupGracefulShutdown();
+
+    // Setup automatic cleanup scheduler
+    this.setupAutomaticCleanup();
+
+    // Check if auto-reservation needs to be done on startup
+    this.checkAndPerformAutoReservation();
+  }
+
+  // Safe method for sending messages with retry logic
+  async safelySendMessage(chatId, text, options = {}) {
+    const maxRetries = 3;
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await this.bot.sendMessage(chatId, text, options);
+        return true; // Success
+      } catch (error) {
+        lastError = error;
+        console.error(
+          `❌ Attempt ${attempt}/${maxRetries} failed to send message:`,
+          error.message,
+        );
+
+        // If it's a rate limit error, wait longer
+        if (error.response && error.response.statusCode === 429) {
+          const retryAfter = error.response.body?.parameters?.retry_after || 1;
+          console.log(`⏰ Rate limited, waiting ${retryAfter} seconds...`);
+          await new Promise((resolve) =>
+            setTimeout(resolve, retryAfter * 1000),
+          );
+        } else if (attempt < maxRetries) {
+          // For other errors, wait before retry
+          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+        }
+      }
     }
-    
-    async handleTextMessage(msg) {
-        const chatId = msg.chat.id;
-        const userId = msg.from.id;
-        const text = msg.text.toLowerCase().trim();
-        
-        console.log(`💬 Message from ${msg.from?.first_name} (${userId}): ${msg.text}`);
-        
-        try {
-            
-            // Handle supervisor commands (use original text for commands)
-            if (userId.toString() === this.supervisorId && msg.text.trim().startsWith('/')) {
-                await this.handleSupervisorCommand(msg);
-                return;
-            }
-            
-            // Process regular messages
-            const intent = this.messageProcessor.processMessage(text);
-            console.log(`🧠 Intent detected: ${intent.type}`);
-            
-            switch (intent.type) {
-                case 'RESERVE':
-                    await this.handleReservation(msg, intent);
-                    break;
-                    
-                case 'RESERVE_MULTIPLE':
-                    await this.handleMultipleReservations(msg, intent);
-                    break;
-                    
-                case 'RELEASE':
-                    await this.handleRelease(msg, intent);
-                    break;
-                    
-                case 'RELEASE_MULTIPLE':
-                    await this.handleMultipleReleases(msg, intent);
-                    break;
-                    
-                case 'STATUS':
-                    await this.handleStatusRequest(msg);
-                    break;
-                    
-                case 'MY_RESERVATIONS':
-                    await this.handleMyReservations(msg);
-                    break;
-                    
-                case 'HELP':
-                    await this.handleHelp(msg);
-                    break;
-                    
-                case 'FIXED_LIST':
-                    await this.handleFixedList(msg);
-                    break;
-                    
-                case 'FIXED_RELEASE':
-                    await this.handleFixedRelease(msg, intent);
-                    break;
-                    
-                case 'FIXED_REMOVAL':
-                    await this.handleFixedRemoval(msg, intent);
-                    break;
-                    
-                default:
-                    await this.handleUnknownCommand(msg);
-            }
-            
-        } catch (error) {
-            console.error('❌ Error handling message:', error);
-            await this.bot.sendMessage(chatId, '❌ Error interno. Intenta de nuevo.');
-        }
+
+    // All retries failed
+    console.error(
+      `❌ Failed to send message after ${maxRetries} attempts:`,
+      lastError.message,
+    );
+    return false;
+  }
+
+  setupHandlers() {
+    // Handle text messages
+    this.bot.on("message", async (msg) => {
+      if (msg.text) {
+        await this.handleTextMessage(msg);
+      }
+    });
+
+    // Handle callback queries (inline keyboard buttons)
+    this.bot.on("callback_query", async (query) => {
+      await this.handleCallbackQuery(query);
+    });
+
+    // Handle polling errors (shouldn't happen in webhook mode)
+    this.bot.on("polling_error", (error) => {
+      console.error("❌ Polling error (unexpected in webhook mode):", error);
+    });
+
+    // Handle webhook errors
+    this.bot.on("webhook_error", (error) => {
+      console.error("❌ Webhook error:", error);
+    });
+  }
+
+  async handleTextMessage(msg) {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const text = msg.text.toLowerCase().trim();
+
+    console.log(
+      `💬 Message from ${msg.from?.first_name} (${userId}): ${msg.text}`,
+    );
+
+    try {
+      // Handle supervisor commands (use original text for commands)
+      if (
+        userId.toString() === this.supervisorId &&
+        msg.text.trim().startsWith("/")
+      ) {
+        await this.handleSupervisorCommand(msg);
+        return;
+      }
+
+      // Process regular messages
+      const intent = this.messageProcessor.processMessage(text);
+      console.log(`🧠 Intent detected: ${intent.type}`);
+
+      switch (intent.type) {
+        case "RESERVE":
+          await this.handleReservation(msg, intent);
+          break;
+
+        case "RESERVE_MULTIPLE":
+          await this.handleMultipleReservations(msg, intent);
+          break;
+
+        case "RELEASE":
+          await this.handleRelease(msg, intent);
+          break;
+
+        case "RELEASE_MULTIPLE":
+          await this.handleMultipleReleases(msg, intent);
+          break;
+
+        case "STATUS":
+          await this.handleStatusRequest(msg);
+          break;
+
+        case "MY_RESERVATIONS":
+          await this.handleMyReservations(msg);
+          break;
+
+        case "HELP":
+          await this.handleHelp(msg);
+          break;
+
+        case "FIXED_LIST":
+          await this.handleFixedList(msg);
+          break;
+
+        case "FIXED_RELEASE":
+          await this.handleFixedRelease(msg, intent);
+          break;
+
+        case "FIXED_REMOVAL":
+          await this.handleFixedRemoval(msg, intent);
+          break;
+
+        default:
+          await this.handleUnknownCommand(msg);
+      }
+    } catch (error) {
+      console.error("❌ Error handling message:", error);
+      await this.bot.sendMessage(chatId, "❌ Error interno. Intenta de nuevo.");
     }
-    
-    async handleSupervisorCommand(msg) {
-        const chatId = msg.chat.id;
-        const text = msg.text.trim();
-        
-        if (text.startsWith('/setparking')) {
-            const numbers = text.replace('/setparking', '').trim().split(',').map(n => n.trim());
-            await this.parkingManager.setParkingSpots(numbers);
-            await this.bot.sendMessage(chatId, `✅ Estacionamientos configurados: ${numbers.join(', ')}`);
-        }
-        else if (text === '/stats') {
-            const stats = await this.parkingManager.getSystemStats();
-            await this.bot.sendMessage(chatId, 
-                `📊 Estadísticas:\n` +
-                `• Espacios totales: ${stats.totalSpots}\n` +
-                `• Reservas activas: ${stats.totalReservations}\n` +
-                `• En lista de espera: ${stats.totalWaitlist}`
-            );
-        }
-        else if (text === '/version') {
-            const packageInfo = require('../../package.json');
-            const now = moment().tz('America/Montevideo');
-            const uptime = process.uptime();
-            const hours = Math.floor(uptime / 3600);
-            const minutes = Math.floor((uptime % 3600) / 60);
-            
-            await this.bot.sendMessage(chatId, 
-                `🔧 *WTC Parking Bot*\n\n` +
-                `📌 Versión: ${packageInfo.version}\n` +
-                `🚀 Modo: Webhook\n` +
-                `⏰ Hora actual: ${now.format('DD/MM/YYYY HH:mm:ss')}\n` +
-                `⏱️ Uptime: ${hours}h ${minutes}m\n` +
-                `🌐 Node: ${process.version}\n` +
-                `💾 DB: ${this.db.dbPath}\n` +
-                `🏷️ Ambiente: ${process.env.NODE_ENV || 'production'}`,
-                { parse_mode: 'Markdown' }
-            );
-        }
-        else if (text === '/clear') {
-            await this.parkingManager.clearAllReservations();
-            await this.bot.sendMessage(chatId, '🗑️ Todas las reservas han sido eliminadas');
-        }
-        else if (text.startsWith('/setfixed')) {
-            // Format: /setfixed 222,4122,4424
-            const fixedStr = text.replace('/setfixed', '').trim();
-            if (!fixedStr) {
-                await this.bot.sendMessage(chatId, 
-                    '❌ Formato: /setfixed 222,4122,4424');
-                return;
-            }
-            
-            const spotNumbers = fixedStr.split(',').map(n => n.trim()).filter(n => n.length > 0);
-            
-            if (spotNumbers.length > 0) {
-                await this.db.setFixedSpotNumbers(spotNumbers);
-                await this.bot.sendMessage(chatId, 
-                    `✅ Espacios fijos configurados:\n${spotNumbers.map(s => `• ${s}`).join('\n')}`);
-            } else {
-                await this.bot.sendMessage(chatId, '❌ No se pudo procesar ningún espacio fijo');
-            }
-        }
-        else if (text === '/reassign') {
-            if (!this.isSupervisor(userId)) {
-                await this.bot.sendMessage(chatId, '❌ No tienes permisos para ejecutar este comando');
-                return;
-            }
-            
-            await this.handleReassignFreedSpaces(chatId);
-        }
-        else if (text === '/assign') {
-            if (!this.isSupervisor(userId)) {
-                await this.bot.sendMessage(chatId, '❌ No tienes permisos para ejecutar este comando');
-                return;
-            }
-            
-            await this.handleAssignAvailableSpots(chatId);
-        }
-        else if (text === '/helpsuper') {
-            const helpText = `🔧 *Comandos de Administrador:*
+  }
+
+  async handleSupervisorCommand(msg) {
+    const chatId = msg.chat.id;
+    const text = msg.text.trim();
+
+    if (text.startsWith("/setparking")) {
+      const numbers = text
+        .replace("/setparking", "")
+        .trim()
+        .split(",")
+        .map((n) => n.trim());
+      await this.parkingManager.setParkingSpots(numbers);
+      await this.bot.sendMessage(
+        chatId,
+        `✅ Estacionamientos configurados: ${numbers.join(", ")}`,
+      );
+    } else if (text === "/stats") {
+      const stats = await this.parkingManager.getSystemStats();
+      await this.bot.sendMessage(
+        chatId,
+        `📊 Estadísticas:\n` +
+          `• Espacios totales: ${stats.totalSpots}\n` +
+          `• Reservas activas: ${stats.totalReservations}\n` +
+          `• En lista de espera: ${stats.totalWaitlist}`,
+      );
+    } else if (text === "/version") {
+      const packageInfo = require("../../package.json");
+      const now = moment().tz("America/Montevideo");
+      const uptime = process.uptime();
+      const hours = Math.floor(uptime / 3600);
+      const minutes = Math.floor((uptime % 3600) / 60);
+
+      await this.bot.sendMessage(
+        chatId,
+        `🔧 *WTC Parking Bot*\n\n` +
+          `📌 Versión: ${packageInfo.version}\n` +
+          `🚀 Modo: Webhook\n` +
+          `⏰ Hora actual: ${now.format("DD/MM/YYYY HH:mm:ss")}\n` +
+          `⏱️ Uptime: ${hours}h ${minutes}m\n` +
+          `🌐 Node: ${process.version}\n` +
+          `💾 DB: ${this.db.dbPath}\n` +
+          `🏷️ Ambiente: ${process.env.NODE_ENV || "production"}`,
+        { parse_mode: "Markdown" },
+      );
+    } else if (text === "/clear") {
+      await this.parkingManager.clearAllReservations();
+      await this.bot.sendMessage(
+        chatId,
+        "🗑️ Todas las reservas han sido eliminadas",
+      );
+    } else if (text.startsWith("/setfixed")) {
+      // Format: /setfixed 222,4122,4424
+      const fixedStr = text.replace("/setfixed", "").trim();
+      if (!fixedStr) {
+        await this.bot.sendMessage(
+          chatId,
+          "❌ Formato: /setfixed 222,4122,4424",
+        );
+        return;
+      }
+
+      const spotNumbers = fixedStr
+        .split(",")
+        .map((n) => n.trim())
+        .filter((n) => n.length > 0);
+
+      if (spotNumbers.length > 0) {
+        await this.db.setFixedSpotNumbers(spotNumbers);
+        await this.bot.sendMessage(
+          chatId,
+          `✅ Espacios fijos configurados:\n${spotNumbers.map((s) => `• ${s}`).join("\n")}`,
+        );
+      } else {
+        await this.bot.sendMessage(
+          chatId,
+          "❌ No se pudo procesar ningún espacio fijo",
+        );
+      }
+    } else if (text === "/reassign") {
+      if (!this.isSupervisor(userId)) {
+        await this.bot.sendMessage(
+          chatId,
+          "❌ No tienes permisos para ejecutar este comando",
+        );
+        return;
+      }
+
+      await this.handleReassignFreedSpaces(chatId);
+    } else if (text === "/assign") {
+      if (!this.isSupervisor(userId)) {
+        await this.bot.sendMessage(
+          chatId,
+          "❌ No tienes permisos para ejecutar este comando",
+        );
+        return;
+      }
+
+      await this.handleAssignAvailableSpots(chatId);
+    } else if (text === "/helpsuper") {
+      const helpText = `🔧 *Comandos de Administrador:*
 
 📋 *Configuración:*
 • \`/setparking 1,2,3\` - Configurar espacios flex
@@ -311,199 +388,246 @@ Ejemplo: \`/setfixed 222,4122,4424\`
 💡 *Uso:*
 Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
             `;
-            await this.bot.sendMessage(chatId, helpText, { parse_mode: 'Markdown' });
-        }
+      await this.bot.sendMessage(chatId, helpText, { parse_mode: "Markdown" });
     }
-    
-    async handleReservation(msg, intent) {
-        const result = await this.queueManager.handleReservation(msg.from.id, msg.from, intent.date);
-        
-        if (result.success) {
-            await this.bot.sendMessage(msg.chat.id, 
-                `✅ Estacionamiento ${result.spotNumber} reservado para ${intent.date.format('dddd DD/MM')}`);
-        } else if (result.waitlist) {
-            await this.bot.sendMessage(msg.chat.id, 
-                `🚫 No hay espacios disponibles para ${intent.date.format('dddd DD/MM')}. ¿Te añado a la lista de espera?`, {
-                reply_markup: {
-                    inline_keyboard: [[
-                        { text: 'Sí, añádeme', callback_data: `waitlist_yes_${msg.from.id}_${intent.date.format('YYYY-MM-DD')}` },
-                        { text: 'No, gracias', callback_data: 'waitlist_no' }
-                    ]]
-                }
-            });
-        } else {
-            await this.bot.sendMessage(msg.chat.id, `❌ ${result.message}`);
-        }
+  }
+
+  async handleReservation(msg, intent) {
+    const result = await this.queueManager.handleReservation(
+      msg.from.id,
+      msg.from,
+      intent.date,
+    );
+
+    if (result.success) {
+      await this.bot.sendMessage(
+        msg.chat.id,
+        `✅ Estacionamiento ${result.spotNumber} reservado para ${intent.date.format("dddd DD/MM")}`,
+      );
+    } else if (result.waitlist) {
+      await this.bot.sendMessage(
+        msg.chat.id,
+        `🚫 No hay espacios disponibles para ${intent.date.format("dddd DD/MM")}. ¿Te añado a la lista de espera?`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Sí, añádeme",
+                  callback_data: `waitlist_yes_${msg.from.id}_${intent.date.format("YYYY-MM-DD")}`,
+                },
+                { text: "No, gracias", callback_data: "waitlist_no" },
+              ],
+            ],
+          },
+        },
+      );
+    } else {
+      await this.bot.sendMessage(msg.chat.id, `❌ ${result.message}`);
     }
-    
-    async handleMultipleReservations(msg, intent) {
-        const results = [];
-        
-        // Process each date individually through QueueManager to respect lottery system
-        for (const date of intent.dates) {
-            try {
-                const result = await this.queueManager.handleReservation(msg.from.id, msg.from, date);
-                results.push({
-                    date: date,
-                    success: result.success,
-                    spotNumber: result.spotNumber,
-                    message: result.message,
-                    queued: result.queued,
-                    waitlist: result.waitlist
-                });
-            } catch (error) {
-                console.error(`Error processing reservation for ${date.format('YYYY-MM-DD')}:`, error);
-                results.push({
-                    date: date,
-                    success: false,
-                    message: 'Error interno procesando la reserva'
-                });
-            }
-        }
-        
-        const successful = results.filter(r => r.success);
-        const queued = results.filter(r => r.queued);
-        const waitlisted = results.filter(r => r.waitlist);
-        const failed = results.filter(r => !r.success && !r.queued && !r.waitlist);
-        
-        let responseText = '';
-        
-        if (successful.length > 0) {
-            responseText += `✅ Reservas exitosas:\n`;
-            successful.forEach(r => {
-                responseText += `• ${r.date.format('dddd DD/MM')}: Estacionamiento ${r.spotNumber}\n`;
-            });
-        }
-        
-        if (queued.length > 0) {
-            responseText += `\n🎲 En cola de lotería:\n`;
-            queued.forEach(r => {
-                responseText += `• ${r.date.format('dddd DD/MM')}: En cola para sorteo del viernes 17:15\n`;
-            });
-        }
-        
-        if (waitlisted.length > 0) {
-            responseText += `\n📝 Ofrecidas para lista de espera:\n`;
-            waitlisted.forEach(r => {
-                responseText += `• ${r.date.format('dddd DD/MM')}: Sin espacios disponibles\n`;
-            });
-        }
-        
-        if (failed.length > 0) {
-            responseText += `\n❌ No se pudieron reservar:\n`;
-            failed.forEach(r => {
-                responseText += `• ${r.date.format('dddd DD/MM')}: ${r.message}\n`;
-            });
-        }
-        
-        await this.bot.sendMessage(msg.chat.id, responseText);
-        
-        // Handle waitlist offers for dates that need it
-        const waitlistOffers = results.filter(r => r.waitlist);
-        if (waitlistOffers.length > 0) {
-            for (const offer of waitlistOffers) {
-                await this.bot.sendMessage(msg.chat.id, 
-                    `🚫 No hay espacios disponibles para ${offer.date.format('dddd DD/MM')}. ¿Te añado a la lista de espera?`, {
-                    reply_markup: {
-                        inline_keyboard: [[
-                            { text: 'Sí, añádeme', callback_data: `waitlist_yes_${msg.from.id}_${offer.date.format('YYYY-MM-DD')}` },
-                            { text: 'No, gracias', callback_data: 'waitlist_no' }
-                        ]]
-                    }
-                });
-            }
-        }
-    }
-    
-    async handleRelease(msg, intent) {
-        const result = await this.parkingManager.releaseSpot(msg.from.id, intent.date);
-        
-        if (result.success) {
-            await this.bot.sendMessage(msg.chat.id, 
-                `✅ Liberado estacionamiento ${result.spotNumber} para ${intent.date.format('dddd DD/MM')}`);
-            
-            // Notify waitlist
-            await this.queueManager.notifyWaitlist(intent.date, result.spotNumber);
-        } else {
-            await this.bot.sendMessage(msg.chat.id, `❌ ${result.message}`);
-        }
-    }
-    
-    async handleMultipleReleases(msg, intent) {
-        const results = [];
-        
-        // Process each release individually to properly handle waitlist notifications
-        for (let i = 0; i < intent.dates.length; i++) {
-            try {
-                const result = await this.parkingManager.releaseSpot(msg.from.id, intent.dates[i]);
-                results.push({
-                    date: intent.dates[i],
-                    success: result.success,
-                    spotNumber: result.spotNumber,
-                    message: result.message
-                });
-                
-                // Notify waitlist for successful releases
-                if (result.success) {
-                    await this.queueManager.notifyWaitlist(intent.dates[i], result.spotNumber);
-                }
-            } catch (error) {
-                console.error(`Error releasing spot for ${intent.dates[i].format('YYYY-MM-DD')}:`, error);
-                results.push({
-                    date: intent.dates[i],
-                    success: false,
-                    message: 'Error interno liberando la reserva'
-                });
-            }
-        }
-        
-        const successful = results.filter(r => r.success);
-        const failed = results.filter(r => !r.success);
-        
-        let responseText = '';
-        
-        if (successful.length > 0) {
-            responseText += `✅ Liberaciones exitosas:\n`;
-            successful.forEach(r => {
-                responseText += `• ${r.date.format('dddd DD/MM')}: Estacionamiento ${r.spotNumber}\n`;
-            });
-        }
-        
-        if (failed.length > 0) {
-            responseText += `\n❌ No se pudieron liberar:\n`;
-            failed.forEach(r => {
-                responseText += `• ${r.date.format('dddd DD/MM')}: ${r.message}\n`;
-            });
-        }
-        
-        await this.bot.sendMessage(msg.chat.id, responseText);
-    }
-    
-    async handleStatusRequest(msg) {
-        const status = await this.parkingManager.getWeekStatus();
-        const responseText = this.parkingManager.formatWeekStatus(status);
-        await this.bot.sendMessage(msg.chat.id, responseText);
-    }
-    
-    async handleMyReservations(msg) {
-        const reservations = await this.parkingManager.getUserReservations(msg.from.id);
-        
-        if (reservations.length === 0) {
-            await this.bot.sendMessage(msg.chat.id, '📝 No tienes reservas activas');
-            return;
-        }
-        
-        let responseText = '📝 Tus reservas:\n\n';
-        reservations.forEach(reservation => {
-            const date = moment(reservation.date);
-            responseText += `• ${date.format('dddd DD/MM')}: Estacionamiento ${reservation.spot_number}\n`;
+  }
+
+  async handleMultipleReservations(msg, intent) {
+    const results = [];
+
+    // Process each date individually through QueueManager to respect lottery system
+    for (const date of intent.dates) {
+      try {
+        const result = await this.queueManager.handleReservation(
+          msg.from.id,
+          msg.from,
+          date,
+        );
+        results.push({
+          date: date,
+          success: result.success,
+          spotNumber: result.spotNumber,
+          message: result.message,
+          queued: result.queued,
+          waitlist: result.waitlist,
         });
-        
-        await this.bot.sendMessage(msg.chat.id, responseText);
+      } catch (error) {
+        console.error(
+          `Error processing reservation for ${date.format("YYYY-MM-DD")}:`,
+          error,
+        );
+        results.push({
+          date: date,
+          success: false,
+          message: "Error interno procesando la reserva",
+        });
+      }
     }
-    
-    async handleHelp(msg) {
-        const helpText = `🚗 *WTC Parking Bot*
+
+    const successful = results.filter((r) => r.success);
+    const queued = results.filter((r) => r.queued);
+    const waitlisted = results.filter((r) => r.waitlist);
+    const failed = results.filter(
+      (r) => !r.success && !r.queued && !r.waitlist,
+    );
+
+    let responseText = "";
+
+    if (successful.length > 0) {
+      responseText += `✅ Reservas exitosas:\n`;
+      successful.forEach((r) => {
+        responseText += `• ${r.date.format("dddd DD/MM")}: Estacionamiento ${r.spotNumber}\n`;
+      });
+    }
+
+    if (queued.length > 0) {
+      responseText += `\n🎲 En cola de lotería:\n`;
+      queued.forEach((r) => {
+        responseText += `• ${r.date.format("dddd DD/MM")}: En cola para sorteo del viernes 17:15\n`;
+      });
+    }
+
+    if (waitlisted.length > 0) {
+      responseText += `\n📝 Ofrecidas para lista de espera:\n`;
+      waitlisted.forEach((r) => {
+        responseText += `• ${r.date.format("dddd DD/MM")}: Sin espacios disponibles\n`;
+      });
+    }
+
+    if (failed.length > 0) {
+      responseText += `\n❌ No se pudieron reservar:\n`;
+      failed.forEach((r) => {
+        responseText += `• ${r.date.format("dddd DD/MM")}: ${r.message}\n`;
+      });
+    }
+
+    await this.bot.sendMessage(msg.chat.id, responseText);
+
+    // Handle waitlist offers for dates that need it
+    const waitlistOffers = results.filter((r) => r.waitlist);
+    if (waitlistOffers.length > 0) {
+      for (const offer of waitlistOffers) {
+        await this.bot.sendMessage(
+          msg.chat.id,
+          `🚫 No hay espacios disponibles para ${offer.date.format("dddd DD/MM")}. ¿Te añado a la lista de espera?`,
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: "Sí, añádeme",
+                    callback_data: `waitlist_yes_${msg.from.id}_${offer.date.format("YYYY-MM-DD")}`,
+                  },
+                  { text: "No, gracias", callback_data: "waitlist_no" },
+                ],
+              ],
+            },
+          },
+        );
+      }
+    }
+  }
+
+  async handleRelease(msg, intent) {
+    const result = await this.parkingManager.releaseSpot(
+      msg.from.id,
+      intent.date,
+    );
+
+    if (result.success) {
+      await this.bot.sendMessage(
+        msg.chat.id,
+        `✅ Liberado estacionamiento ${result.spotNumber} para ${intent.date.format("dddd DD/MM")}`,
+      );
+
+      // Notify waitlist
+      await this.queueManager.notifyWaitlist(intent.date, result.spotNumber);
+    } else {
+      await this.bot.sendMessage(msg.chat.id, `❌ ${result.message}`);
+    }
+  }
+
+  async handleMultipleReleases(msg, intent) {
+    const results = [];
+
+    // Process each release individually to properly handle waitlist notifications
+    for (let i = 0; i < intent.dates.length; i++) {
+      try {
+        const result = await this.parkingManager.releaseSpot(
+          msg.from.id,
+          intent.dates[i],
+        );
+        results.push({
+          date: intent.dates[i],
+          success: result.success,
+          spotNumber: result.spotNumber,
+          message: result.message,
+        });
+
+        // Notify waitlist for successful releases
+        if (result.success) {
+          await this.queueManager.notifyWaitlist(
+            intent.dates[i],
+            result.spotNumber,
+          );
+        }
+      } catch (error) {
+        console.error(
+          `Error releasing spot for ${intent.dates[i].format("YYYY-MM-DD")}:`,
+          error,
+        );
+        results.push({
+          date: intent.dates[i],
+          success: false,
+          message: "Error interno liberando la reserva",
+        });
+      }
+    }
+
+    const successful = results.filter((r) => r.success);
+    const failed = results.filter((r) => !r.success);
+
+    let responseText = "";
+
+    if (successful.length > 0) {
+      responseText += `✅ Liberaciones exitosas:\n`;
+      successful.forEach((r) => {
+        responseText += `• ${r.date.format("dddd DD/MM")}: Estacionamiento ${r.spotNumber}\n`;
+      });
+    }
+
+    if (failed.length > 0) {
+      responseText += `\n❌ No se pudieron liberar:\n`;
+      failed.forEach((r) => {
+        responseText += `• ${r.date.format("dddd DD/MM")}: ${r.message}\n`;
+      });
+    }
+
+    await this.bot.sendMessage(msg.chat.id, responseText);
+  }
+
+  async handleStatusRequest(msg) {
+    const status = await this.parkingManager.getWeekStatus();
+    const responseText = this.parkingManager.formatWeekStatus(status);
+    await this.bot.sendMessage(msg.chat.id, responseText);
+  }
+
+  async handleMyReservations(msg) {
+    const reservations = await this.parkingManager.getUserReservations(
+      msg.from.id,
+    );
+
+    if (reservations.length === 0) {
+      await this.bot.sendMessage(msg.chat.id, "📝 No tienes reservas activas");
+      return;
+    }
+
+    let responseText = "📝 Tus reservas:\n\n";
+    reservations.forEach((reservation) => {
+      const date = moment(reservation.date);
+      responseText += `• ${date.format("dddd DD/MM")}: Estacionamiento ${reservation.spot_number}\n`;
+    });
+
+    await this.bot.sendMessage(msg.chat.id, responseText);
+  }
+
+  async handleHelp(msg) {
+    const helpText = `🚗 *WTC Parking Bot*
 
 📅 *Reservar:*
 • "voy el lunes" - Un día
@@ -527,610 +651,751 @@ Los usuarios pueden liberar espacios fijos diciendo "libero el 222 para martes"
 ⏰ Días: lunes-viernes, "mañana", "hoy"
 🎯 Lista de espera automática si no hay espacios
         `;
-        
-        await this.bot.sendMessage(msg.chat.id, helpText, { parse_mode: 'Markdown' });
+
+    await this.bot.sendMessage(msg.chat.id, helpText, {
+      parse_mode: "Markdown",
+    });
+  }
+
+  async handleFixedList(msg) {
+    try {
+      const fixedSpots = await this.db.getFixedSpots();
+
+      if (fixedSpots.length === 0) {
+        await this.bot.sendMessage(
+          msg.chat.id,
+          "📋 No hay espacios fijos configurados.",
+        );
+        return;
+      }
+
+      const spotNumbers = fixedSpots.map((spot) => spot.spot_number).join(", ");
+      await this.bot.sendMessage(
+        msg.chat.id,
+        `🔐 *Espacios Fijos:*\n\n${spotNumbers}\n\n💡 Puedes liberar cualquiera de estos diciendo "libero el XXXX para martes"`,
+        { parse_mode: "Markdown" },
+      );
+    } catch (error) {
+      console.error("Error getting fixed spots list:", error);
+      await this.bot.sendMessage(
+        msg.chat.id,
+        "❌ Error al obtener la lista de espacios fijos.",
+      );
     }
-    
-    async handleFixedList(msg) {
+  }
+
+  async handleUnknownCommand(msg) {
+    await this.bot.sendMessage(
+      msg.chat.id,
+      '🤔 No entiendo ese comando. Escribe "ayuda" para ver los comandos disponibles.',
+    );
+  }
+
+  async handleFixedRelease(msg, intent) {
+    const chatId = msg.chat.id;
+
+    try {
+      // Check if the spot number is in the fixed spots list
+      const isFixed = await this.db.isFixedSpot(intent.spotNumber);
+
+      if (!isFixed) {
+        await this.bot.sendMessage(
+          chatId,
+          `❌ El espacio ${intent.spotNumber} no es un espacio fijo.`,
+        );
+        return;
+      }
+
+      // Release the spot for the specified period
+      const startDateStr = intent.startDate.format("YYYY-MM-DD");
+      const endDateStr = intent.endDate.format("YYYY-MM-DD");
+
+      await this.db.releaseFixedSpot(
+        intent.spotNumber,
+        startDateStr,
+        endDateStr,
+      );
+
+      // Process each day in the range to notify waitlist
+      const currentDate = intent.startDate.clone();
+      const notificationResults = [];
+
+      while (currentDate.isSameOrBefore(intent.endDate, "day")) {
+        // Skip weekends
+        if (currentDate.day() !== 0 && currentDate.day() !== 6) {
+          // Notify waitlist for this specific date
+          const notified = await this.queueManager.notifyWaitlist(
+            currentDate,
+            intent.spotNumber,
+          );
+          if (notified) {
+            notificationResults.push(currentDate.format("dddd DD/MM"));
+          }
+        }
+        currentDate.add(1, "day");
+      }
+
+      let responseMessage = `✅ Espacio ${intent.spotNumber} liberado desde ${intent.startDate.format("dddd DD/MM")} hasta ${intent.endDate.format("dddd DD/MM")}`;
+
+      if (notificationResults.length > 0) {
+        responseMessage += `\n\n📢 Se asignó el espacio a personas en lista de espera para: ${notificationResults.join(", ")}`;
+      }
+
+      await this.bot.sendMessage(chatId, responseMessage);
+    } catch (error) {
+      console.error("Error releasing fixed spot:", error);
+      await this.bot.sendMessage(
+        chatId,
+        "❌ Error al liberar el espacio fijo.",
+      );
+    }
+  }
+
+  async handleFixedRemoval(msg, intent) {
+    const chatId = msg.chat.id;
+
+    try {
+      // Check if the spot number is in the fixed spots list
+      const isFixed = await this.db.isFixedSpot(intent.spotNumber);
+
+      if (!isFixed) {
+        await this.bot.sendMessage(
+          chatId,
+          `❌ El espacio ${intent.spotNumber} no es un espacio fijo.`,
+        );
+        return;
+      }
+
+      // Remove the spot from the pool
+      const removed = await this.db.removeFixedSpotRelease(intent.spotNumber);
+
+      if (removed > 0) {
+        await this.bot.sendMessage(
+          chatId,
+          `✅ Espacio ${intent.spotNumber} removido del pool de reservas.`,
+        );
+      } else {
+        await this.bot.sendMessage(
+          chatId,
+          `⚠️ El espacio ${intent.spotNumber} no estaba liberado.`,
+        );
+      }
+    } catch (error) {
+      console.error("Error removing fixed spot from pool:", error);
+      await this.bot.sendMessage(
+        chatId,
+        "❌ Error al remover el espacio fijo del pool.",
+      );
+    }
+  }
+
+  async handleCallbackQuery(query) {
+    const data = query.data;
+
+    if (data.startsWith("waitlist_yes_")) {
+      const parts = data.split("_");
+      const userId = parseInt(parts[2]);
+      const dateStr = parts[3];
+      const date = moment(dateStr);
+
+      await this.parkingManager.addToWaitlist(userId, query.from, date);
+
+      await this.bot.editMessageText(
+        `📝 Añadido a lista de espera para ${date.format("dddd DD/MM")}. Te notificaré si se libera un espacio.`,
+        {
+          chat_id: query.message.chat.id,
+          message_id: query.message.message_id,
+        },
+      );
+    } else if (data === "waitlist_no") {
+      await this.bot.editMessageText("👍 Entendido. ¡Que tengas buen día!", {
+        chat_id: query.message.chat.id,
+        message_id: query.message.message_id,
+      });
+    }
+
+    await this.bot.answerCallbackQuery(query.id);
+  }
+
+  setupAutomaticCleanup() {
+    const scheduleNextFridayReset = () => {
+      const now = moment().tz("America/Montevideo");
+
+      // Calculate next Friday at 17:00
+      let nextFriday = now.clone();
+
+      // If today is Friday and we haven't passed 17:00 yet
+      if (now.day() === 5 && now.hour() < 17) {
+        nextFriday = now.clone().hour(17).minute(0).second(0);
+      } else {
+        // Go to next Friday
+        nextFriday = now
+          .clone()
+          .day(5 + 7)
+          .hour(17)
+          .minute(0)
+          .second(0); // Next Friday
+      }
+
+      const timeUntilReset = nextFriday.diff(now);
+
+      console.log(
+        `🔄 Next Friday 5PM reset scheduled for: ${nextFriday.format("dddd DD/MM/YYYY HH:mm")}`,
+      );
+
+      this.fridayResetTimeout = setTimeout(async () => {
         try {
-            const fixedSpots = await this.db.getFixedSpots();
-            
-            if (fixedSpots.length === 0) {
-                await this.bot.sendMessage(msg.chat.id, '📋 No hay espacios fijos configurados.');
-                return;
-            }
-            
-            const spotNumbers = fixedSpots.map(spot => spot.spot_number).join(', ');
-            await this.bot.sendMessage(msg.chat.id, 
-                `🔐 *Espacios Fijos:*\n\n${spotNumbers}\n\n💡 Puedes liberar cualquiera de estos diciendo "libero el XXXX para martes"`, 
-                { parse_mode: 'Markdown' }
-            );
-            
-        } catch (error) {
-            console.error('Error getting fixed spots list:', error);
-            await this.bot.sendMessage(msg.chat.id, '❌ Error al obtener la lista de espacios fijos.');
-        }
-    }
-    
-    async handleUnknownCommand(msg) {
-        await this.bot.sendMessage(msg.chat.id, 
-            '🤔 No entiendo ese comando. Escribe "ayuda" para ver los comandos disponibles.');
-    }
-    
-    async handleFixedRelease(msg, intent) {
-        const chatId = msg.chat.id;
-        
-        try {
-            // Check if the spot number is in the fixed spots list
-            const isFixed = await this.db.isFixedSpot(intent.spotNumber);
-            
-            if (!isFixed) {
-                await this.bot.sendMessage(chatId, 
-                    `❌ El espacio ${intent.spotNumber} no es un espacio fijo.`);
-                return;
-            }
-            
-            // Release the spot for the specified period
-            const startDateStr = intent.startDate.format('YYYY-MM-DD');
-            const endDateStr = intent.endDate.format('YYYY-MM-DD');
-            
-            await this.db.releaseFixedSpot(intent.spotNumber, startDateStr, endDateStr);
-            
-            // Process each day in the range to notify waitlist
-            const currentDate = intent.startDate.clone();
-            const notificationResults = [];
-            
-            while (currentDate.isSameOrBefore(intent.endDate, 'day')) {
-                // Skip weekends
-                if (currentDate.day() !== 0 && currentDate.day() !== 6) {
-                    // Notify waitlist for this specific date
-                    const notified = await this.queueManager.notifyWaitlist(currentDate, intent.spotNumber);
-                    if (notified) {
-                        notificationResults.push(currentDate.format('dddd DD/MM'));
-                    }
-                }
-                currentDate.add(1, 'day');
-            }
-            
-            let responseMessage = `✅ Espacio ${intent.spotNumber} liberado desde ${intent.startDate.format('dddd DD/MM')} hasta ${intent.endDate.format('dddd DD/MM')}`;
-            
-            if (notificationResults.length > 0) {
-                responseMessage += `\n\n📢 Se asignó el espacio a personas en lista de espera para: ${notificationResults.join(', ')}`;
-            }
-            
-            await this.bot.sendMessage(chatId, responseMessage);
-            
-        } catch (error) {
-            console.error('Error releasing fixed spot:', error);
-            await this.bot.sendMessage(chatId, '❌ Error al liberar el espacio fijo.');
-        }
-    }
-    
-    async handleFixedRemoval(msg, intent) {
-        const chatId = msg.chat.id;
-        
-        try {
-            // Check if the spot number is in the fixed spots list
-            const isFixed = await this.db.isFixedSpot(intent.spotNumber);
-            
-            if (!isFixed) {
-                await this.bot.sendMessage(chatId, 
-                    `❌ El espacio ${intent.spotNumber} no es un espacio fijo.`);
-                return;
-            }
-            
-            // Remove the spot from the pool
-            const removed = await this.db.removeFixedSpotRelease(intent.spotNumber);
-            
-            if (removed > 0) {
-                await this.bot.sendMessage(chatId, 
-                    `✅ Espacio ${intent.spotNumber} removido del pool de reservas.`);
-            } else {
-                await this.bot.sendMessage(chatId, 
-                    `⚠️ El espacio ${intent.spotNumber} no estaba liberado.`);
-            }
-            
-        } catch (error) {
-            console.error('Error removing fixed spot from pool:', error);
-            await this.bot.sendMessage(chatId, '❌ Error al remover el espacio fijo del pool.');
-        }
-    }
-    
-    async handleCallbackQuery(query) {
-        const data = query.data;
-        
-        if (data.startsWith('waitlist_yes_')) {
-            const parts = data.split('_');
-            const userId = parseInt(parts[2]);
-            const dateStr = parts[3];
-            const date = moment(dateStr);
-            
-            await this.parkingManager.addToWaitlist(userId, query.from, date);
-            
-            await this.bot.editMessageText(
-                `📝 Añadido a lista de espera para ${date.format('dddd DD/MM')}. Te notificaré si se libera un espacio.`, {
-                chat_id: query.message.chat.id,
-                message_id: query.message.message_id
-            });
-        }
-        else if (data === 'waitlist_no') {
-            await this.bot.editMessageText('👍 Entendido. ¡Que tengas buen día!', {
-                chat_id: query.message.chat.id,
-                message_id: query.message.message_id
-            });
-        }
-        
-        await this.bot.answerCallbackQuery(query.id);
-    }
-    
-    setupAutomaticCleanup() {
-        const scheduleNextFridayReset = () => {
-            const now = moment().tz('America/Montevideo');
-            
-            // Calculate next Friday at 17:00
-            let nextFriday = now.clone();
-            
-            // If today is Friday and we haven't passed 17:00 yet
-            if (now.day() === 5 && now.hour() < 17) {
-                nextFriday = now.clone().hour(17).minute(0).second(0);
-            } else {
-                // Go to next Friday
-                nextFriday = now.clone().day(5 + 7).hour(17).minute(0).second(0); // Next Friday
-            }
-            
-            const timeUntilReset = nextFriday.diff(now);
-            
-            console.log(`🔄 Next Friday 5PM reset scheduled for: ${nextFriday.format('dddd DD/MM/YYYY HH:mm')}`);
-            
-            this.fridayResetTimeout = setTimeout(async () => {
-                try {
-                    console.log('🔄 Running Friday 5PM reset...');
-                    const result = await this.db.resetCurrentWeekReservations();
-                    
-                    // Auto-reserve spot for supervisor (Wilman Arambillete) for next week
-                    if (this.supervisorId && this.automaticReservationEnabled) {
-                        try {
-                            // Get next Monday date
-                            const nextMonday = moment().tz('America/Montevideo').add(1, 'week').startOf('isoWeek');
-                            
-                            // Create supervisor user object
-                            const supervisorUser = {
-                                username: 'warambillete',
-                                first_name: 'Wilman',
-                                last_name: 'Arambillete'
-                            };
-                            
-                            // Reserve based on AUTOMATIC_RESERVATION_FULL_WEEK setting
-                            const weekDays = [];
-                            if (this.automaticReservationFullWeek) {
-                                // Reserve entire week (Monday to Friday)
-                                for (let i = 0; i < 5; i++) {
-                                    weekDays.push(nextMonday.clone().add(i, 'days').format('YYYY-MM-DD'));
-                                }
-                            } else {
-                                // Only reserve for next Friday when FULL_WEEK=false
-                                const nextFriday = nextMonday.clone().add(4, 'days');
-                                weekDays.push(nextFriday.format('YYYY-MM-DD'));
-                            }
-                            
-                            // Silently perform automatic reservations
-                            for (const date of weekDays) {
-                                // Check if preferred spot is available
-                                const spots = await this.db.getParkingSpots();
-                                const preferredSpotExists = spots.some(spot => spot.number === this.automaticReservationPreferredSpot);
-                                
-                                let spotToReserve = null;
-                                
-                                if (preferredSpotExists) {
-                                    // Check if preferred spot is available for this date
-                                    const reservations = await this.db.getReservationsByDate(date);
-                                    const isPreferredSpotReserved = reservations.some(res => res.spot_number === this.automaticReservationPreferredSpot);
-                                    
-                                    if (!isPreferredSpotReserved) {
-                                        spotToReserve = this.automaticReservationPreferredSpot;
-                                    }
-                                }
-                                
-                                // If preferred spot is not available or doesn't exist, get any available spot
-                                if (!spotToReserve) {
-                                    const availableSpot = await this.db.getAvailableSpot(date);
-                                    if (availableSpot) {
-                                        spotToReserve = availableSpot;
-                                    }
-                                }
-                                
-                                // Make the reservation
-                                if (spotToReserve) {
-                                    try {
-                                        await this.db.createReservation(this.supervisorId, supervisorUser, date, spotToReserve);
-                                        console.log(`Auto-reserved spot ${spotToReserve} for ${date}`);
-                                    } catch (err) {
-                                        console.error(`Error auto-reserving for ${date}:`, err);
-                                    }
-                                }
-                            }
-                            
-                            // Send only the reset notification
-                            await this.bot.sendMessage(this.supervisorId, 
-                                `🔄 Reset automático de viernes 17:00 completado: ${result.reservationsCleared} reservas y ${result.waitlistCleared} listas de espera eliminadas.`);
-                        } catch (error) {
-                            console.error('Error during supervisor auto-reservation:', error);
-                            // Still send regular reset notification even if auto-reservation failed
-                            await this.bot.sendMessage(this.supervisorId, 
-                                `🔄 Reset automático de viernes 17:00 completado: ${result.reservationsCleared} reservas y ${result.waitlistCleared} listas de espera eliminadas.`);
-                        }
-                    } else if (this.supervisorId && !this.automaticReservationEnabled) {
-                        // Send regular notification without automatic reservation
-                        try {
-                            await this.bot.sendMessage(this.supervisorId, 
-                                `🔄 Reset automático de viernes 17:00 completado: ${result.reservationsCleared} reservas y ${result.waitlistCleared} listas de espera eliminadas.`);
-                        } catch (error) {
-                            console.error('Error sending Friday reset notification to supervisor:', error);
-                        }
-                    }
-                } catch (error) {
-                    console.error('❌ Error during Friday reset:', error);
-                }
-                
-                // Schedule next Friday reset
-                scheduleNextFridayReset();
-            }, timeUntilReset);
-        };
-        
-        // Only start Friday reset scheduler - no daily cleanup
-        scheduleNextFridayReset();
-    }
-    
-    async checkAndPerformAutoReservation() {
-        // Check if auto-reservation should be performed on startup
-        if (!this.supervisorId || !this.automaticReservationEnabled) {
-            return;
-        }
-        
-        const now = moment().tz('America/Montevideo');
-        
-        // Check if we're after Friday 17:00 (i.e., in the period where next week should be reserved)
-        const isAfterFridayReset = (now.day() === 5 && now.hour() >= 17) || now.day() === 6 || now.day() === 0;
-        
-        if (!isAfterFridayReset) {
-            console.log('⏰ Not after Friday 17:00 reset, skipping auto-reservation check');
-            return;
-        }
-        
-        try {
-            // Get next Monday date
-            const nextMonday = moment().tz('America/Montevideo').add(1, 'week').startOf('isoWeek');
-            
-            // Check which days to reserve based on AUTOMATIC_RESERVATION_FULL_WEEK setting
-            const datesToCheck = [];
-            if (this.automaticReservationFullWeek) {
-                // Check entire week
+          console.log("🔄 Running Friday 5PM reset...");
+          const result = await this.db.resetCurrentWeekReservations();
+
+          // Auto-reserve spot for supervisor (Wilman Arambillete) for next week
+          if (this.supervisorId && this.automaticReservationEnabled) {
+            try {
+              // Get next Monday date
+              const nextMonday = moment()
+                .tz("America/Montevideo")
+                .add(1, "week")
+                .startOf("isoWeek");
+
+              // Create supervisor user object
+              const supervisorUser = {
+                username: "warambillete",
+                first_name: "Wilman",
+                last_name: "Arambillete",
+              };
+
+              // Reserve based on AUTOMATIC_RESERVATION_FULL_WEEK setting
+              const weekDays = [];
+              if (this.automaticReservationFullWeek) {
+                // Reserve entire week (Monday to Friday)
                 for (let i = 0; i < 5; i++) {
-                    datesToCheck.push(nextMonday.clone().add(i, 'days').format('YYYY-MM-DD'));
+                  weekDays.push(
+                    nextMonday.clone().add(i, "days").format("YYYY-MM-DD"),
+                  );
                 }
-            } else {
-                // Only check Friday
-                const nextFriday = nextMonday.clone().add(4, 'days');
-                datesToCheck.push(nextFriday.format('YYYY-MM-DD'));
-            }
-            
-            // Check if supervisor already has reservations for these dates
-            let needsReservation = false;
-            for (const date of datesToCheck) {
-                const existingReservation = await this.db.getReservation(this.supervisorId, date);
-                if (!existingReservation) {
-                    needsReservation = true;
-                    break;
-                }
-            }
-            
-            if (!needsReservation) {
-                console.log('✅ Auto-reservation already exists for supervisor');
-                return;
-            }
-            
-            console.log('🔄 Performing auto-reservation on startup (after Friday 17:00)...');
-            
-            // Create supervisor user object
-            const supervisorUser = {
-                username: 'warambillete',
-                first_name: 'Wilman',
-                last_name: 'Arambillete'
-            };
-            
-            // Perform reservations
-            const weekDays = datesToCheck;
-            let reservedDays = [];
-            
-            for (const date of weekDays) {
+              } else {
+                // Only reserve for next Friday when FULL_WEEK=false
+                const nextFriday = nextMonday.clone().add(4, "days");
+                weekDays.push(nextFriday.format("YYYY-MM-DD"));
+              }
+
+              // Silently perform automatic reservations
+              for (const date of weekDays) {
                 // Check if preferred spot is available
                 const spots = await this.db.getParkingSpots();
-                const preferredSpotExists = spots.some(spot => spot.number === this.automaticReservationPreferredSpot);
-                
+                const preferredSpotExists = spots.some(
+                  (spot) =>
+                    spot.number === this.automaticReservationPreferredSpot,
+                );
+
                 let spotToReserve = null;
-                
+
                 if (preferredSpotExists) {
-                    // Check if preferred spot is available for this date
-                    const reservations = await this.db.getReservationsByDate(date);
-                    const isPreferredSpotReserved = reservations.some(res => res.spot_number === this.automaticReservationPreferredSpot);
-                    
-                    if (!isPreferredSpotReserved) {
-                        spotToReserve = this.automaticReservationPreferredSpot;
-                    }
+                  // Check if preferred spot is available for this date
+                  const reservations =
+                    await this.db.getReservationsByDate(date);
+                  const isPreferredSpotReserved = reservations.some(
+                    (res) =>
+                      res.spot_number ===
+                      this.automaticReservationPreferredSpot,
+                  );
+
+                  if (!isPreferredSpotReserved) {
+                    spotToReserve = this.automaticReservationPreferredSpot;
+                  }
                 }
-                
+
                 // If preferred spot is not available or doesn't exist, get any available spot
                 if (!spotToReserve) {
-                    const availableSpot = await this.db.getAvailableSpot(date);
-                    if (availableSpot) {
-                        spotToReserve = availableSpot;
-                    }
+                  const availableSpot = await this.db.getAvailableSpot(date);
+                  if (availableSpot) {
+                    spotToReserve = availableSpot;
+                  }
                 }
-                
+
                 // Make the reservation
                 if (spotToReserve) {
-                    try {
-                        const existingReservation = await this.db.getReservation(this.supervisorId, date);
-                        if (!existingReservation) {
-                            await this.db.createReservation(this.supervisorId, supervisorUser, date, spotToReserve);
-                            const dateFormatted = moment(date).format('dddd DD/MM');
-                            reservedDays.push(`${dateFormatted}: Espacio ${spotToReserve}`);
-                            console.log(`✅ Auto-reserved spot ${spotToReserve} for ${date}`);
-                        }
-                    } catch (err) {
-                        console.error(`Error auto-reserving for ${date}:`, err);
-                    }
+                  try {
+                    await this.db.createReservation(
+                      this.supervisorId,
+                      supervisorUser,
+                      date,
+                      spotToReserve,
+                    );
+                    console.log(
+                      `Auto-reserved spot ${spotToReserve} for ${date}`,
+                    );
+                  } catch (err) {
+                    console.error(`Error auto-reserving for ${date}:`, err);
+                  }
                 }
-            }
-            
-            // Notify supervisor if reservations were made
-            if (reservedDays.length > 0) {
-                try {
-                    await this.bot.sendMessage(this.supervisorId, 
-                        `🔄 Auto-reservación completada en el arranque del bot:\n\n${reservedDays.join('\n')}`);
-                } catch (error) {
-                    console.error('Error sending auto-reservation notification:', error);
-                }
-            }
-            
-        } catch (error) {
-            console.error('Error during startup auto-reservation check:', error);
-        }
-    }
-    
-    setupGracefulShutdown() {
-        const shutdown = async (signal) => {
-            console.log(`🛑 ${signal} received. Shutting down gracefully...`);
-            
-            try {
-                // Clear Friday reset timeout
-                if (this.fridayResetTimeout) {
-                    clearTimeout(this.fridayResetTimeout);
-                    console.log('✅ Friday reset scheduler stopped');
-                }
-                
-                // Stop server
-                if (this.server) {
-                    this.server.close();
-                    console.log('✅ HTTP server stopped');
-                }
-                
-                // Close database
-                if (this.db) {
-                    this.db.close();
-                    console.log('✅ Database closed');
-                }
-                
+              }
+
+              // Send only the reset notification
+              await this.bot.sendMessage(
+                this.supervisorId,
+                `🔄 Reset automático de viernes 17:00 completado: ${result.reservationsCleared} reservas y ${result.waitlistCleared} listas de espera eliminadas.`,
+              );
             } catch (error) {
-                console.error('❌ Error during shutdown:', error);
+              console.error("Error during supervisor auto-reservation:", error);
+              // Still send regular reset notification even if auto-reservation failed
+              await this.bot.sendMessage(
+                this.supervisorId,
+                `🔄 Reset automático de viernes 17:00 completado: ${result.reservationsCleared} reservas y ${result.waitlistCleared} listas de espera eliminadas.`,
+              );
             }
-            
-            console.log('👋 Shutdown complete');
-            process.exit(0);
-        };
-        
-        process.on('SIGTERM', () => shutdown('SIGTERM'));
-        process.on('SIGINT', () => shutdown('SIGINT'));
-    }
-    
-    async handleReassignFreedSpaces(chatId) {
-        try {
-            await this.bot.sendMessage(chatId, '🔄 Iniciando proceso de reasignación de espacios liberados...');
-            
-            const moment = require('moment-timezone');
-            
-            // Get all released fixed spots for future dates
-            let releasedSpots = [];
+          } else if (this.supervisorId && !this.automaticReservationEnabled) {
+            // Send regular notification without automatic reservation
             try {
-                releasedSpots = await this.db.query(`
+              await this.bot.sendMessage(
+                this.supervisorId,
+                `🔄 Reset automático de viernes 17:00 completado: ${result.reservationsCleared} reservas y ${result.waitlistCleared} listas de espera eliminadas.`,
+              );
+            } catch (error) {
+              console.error(
+                "Error sending Friday reset notification to supervisor:",
+                error,
+              );
+            }
+          }
+        } catch (error) {
+          console.error("❌ Error during Friday reset:", error);
+        }
+
+        // Schedule next Friday reset
+        scheduleNextFridayReset();
+      }, timeUntilReset);
+    };
+
+    // Only start Friday reset scheduler - no daily cleanup
+    scheduleNextFridayReset();
+  }
+
+  async checkAndPerformAutoReservation() {
+    // Check if auto-reservation should be performed on startup
+    if (!this.supervisorId || !this.automaticReservationEnabled) {
+      return;
+    }
+
+    const now = moment().tz("America/Montevideo");
+
+    // Check if we're after Friday 17:00 (i.e., in the period where next week should be reserved)
+    const isAfterFridayReset =
+      (now.day() === 5 && now.hour() >= 17) ||
+      now.day() === 6 ||
+      now.day() === 0;
+
+    if (!isAfterFridayReset) {
+      console.log(
+        "⏰ Not after Friday 17:00 reset, skipping auto-reservation check",
+      );
+      return;
+    }
+
+    try {
+      // Get next Monday date
+      const nextMonday = moment()
+        .tz("America/Montevideo")
+        .add(1, "week")
+        .startOf("isoWeek");
+
+      // Check which days to reserve based on AUTOMATIC_RESERVATION_FULL_WEEK setting
+      const datesToCheck = [];
+      if (this.automaticReservationFullWeek) {
+        // Check entire week
+        for (let i = 0; i < 5; i++) {
+          datesToCheck.push(
+            nextMonday.clone().add(i, "days").format("YYYY-MM-DD"),
+          );
+        }
+      } else {
+        // Only check Friday
+        const nextFriday = nextMonday.clone().add(4, "days");
+        datesToCheck.push(nextFriday.format("YYYY-MM-DD"));
+      }
+
+      // Check if supervisor already has reservations for these dates
+      let needsReservation = false;
+      for (const date of datesToCheck) {
+        const existingReservation = await this.db.getReservation(
+          this.supervisorId,
+          date,
+        );
+        if (!existingReservation) {
+          needsReservation = true;
+          break;
+        }
+      }
+
+      if (!needsReservation) {
+        console.log("✅ Auto-reservation already exists for supervisor");
+        return;
+      }
+
+      console.log(
+        "🔄 Performing auto-reservation on startup (after Friday 17:00)...",
+      );
+
+      // Create supervisor user object
+      const supervisorUser = {
+        username: "warambillete",
+        first_name: "Wilman",
+        last_name: "Arambillete",
+      };
+
+      // Perform reservations
+      const weekDays = datesToCheck;
+      let reservedDays = [];
+
+      for (const date of weekDays) {
+        // Check if preferred spot is available
+        const spots = await this.db.getParkingSpots();
+        const preferredSpotExists = spots.some(
+          (spot) => spot.number === this.automaticReservationPreferredSpot,
+        );
+
+        let spotToReserve = null;
+
+        if (preferredSpotExists) {
+          // Check if preferred spot is available for this date
+          const reservations = await this.db.getReservationsByDate(date);
+          const isPreferredSpotReserved = reservations.some(
+            (res) => res.spot_number === this.automaticReservationPreferredSpot,
+          );
+
+          if (!isPreferredSpotReserved) {
+            spotToReserve = this.automaticReservationPreferredSpot;
+          }
+        }
+
+        // If preferred spot is not available or doesn't exist, get any available spot
+        if (!spotToReserve) {
+          const availableSpot = await this.db.getAvailableSpot(date);
+          if (availableSpot) {
+            spotToReserve = availableSpot;
+          }
+        }
+
+        // Make the reservation
+        if (spotToReserve) {
+          try {
+            const existingReservation = await this.db.getReservation(
+              this.supervisorId,
+              date,
+            );
+            if (!existingReservation) {
+              await this.db.createReservation(
+                this.supervisorId,
+                supervisorUser,
+                date,
+                spotToReserve,
+              );
+              const dateFormatted = moment(date).format("dddd DD/MM");
+              reservedDays.push(`${dateFormatted}: Espacio ${spotToReserve}`);
+              console.log(`✅ Auto-reserved spot ${spotToReserve} for ${date}`);
+            }
+          } catch (err) {
+            console.error(`Error auto-reserving for ${date}:`, err);
+          }
+        }
+      }
+
+      // Notify supervisor if reservations were made
+      if (reservedDays.length > 0) {
+        try {
+          await this.bot.sendMessage(
+            this.supervisorId,
+            `🔄 Auto-reservación completada en el arranque del bot:\n\n${reservedDays.join("\n")}`,
+          );
+        } catch (error) {
+          console.error("Error sending auto-reservation notification:", error);
+        }
+      }
+    } catch (error) {
+      console.error("Error during startup auto-reservation check:", error);
+    }
+  }
+
+  setupGracefulShutdown() {
+    const shutdown = async (signal) => {
+      console.log(`🛑 ${signal} received. Shutting down gracefully...`);
+
+      try {
+        // Clear Friday reset timeout
+        if (this.fridayResetTimeout) {
+          clearTimeout(this.fridayResetTimeout);
+          console.log("✅ Friday reset scheduler stopped");
+        }
+
+        // Stop server
+        if (this.server) {
+          this.server.close();
+          console.log("✅ HTTP server stopped");
+        }
+
+        // Close database
+        if (this.db) {
+          this.db.close();
+          console.log("✅ Database closed");
+        }
+      } catch (error) {
+        console.error("❌ Error during shutdown:", error);
+      }
+
+      console.log("👋 Shutdown complete");
+      process.exit(0);
+    };
+
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
+  }
+
+  async handleReassignFreedSpaces(chatId) {
+    try {
+      await this.bot.sendMessage(
+        chatId,
+        "🔄 Iniciando proceso de reasignación de espacios liberados...",
+      );
+
+      const moment = require("moment-timezone");
+
+      // Get all released fixed spots for future dates
+      let releasedSpots = [];
+      try {
+        releasedSpots = await this.db.query(`
                     SELECT DISTINCT fsr.spot_number, fsr.start_date, fsr.end_date
                     FROM fixed_spot_releases fsr
                     WHERE fsr.end_date >= date('now')
                     ORDER BY fsr.start_date
                 `);
-            } catch (dbError) {
-                if (dbError.message.includes('no such table: fixed_spot_releases')) {
-                    console.log('Fixed spot releases table not ready yet, skipping reassignment');
-                    await this.bot.sendMessage(chatId, '⚠️ Sistema de espacios fijos aún no está completamente inicializado. Intenta de nuevo en unos segundos.');
-                    return;
-                }
-                throw dbError; // Re-throw other database errors
-            }
-            
-            if (!releasedSpots || releasedSpots.length === 0) {
-                await this.bot.sendMessage(chatId, '✅ No hay espacios fijos liberados pendientes de asignar.');
-                return;
-            }
-            
-            let totalReassigned = 0;
-            let issues = [];
-            
-            for (const release of releasedSpots) {
-                const startDate = moment(release.start_date);
-                const endDate = moment(release.end_date);
-                const currentDate = startDate.clone();
-                
-                while (currentDate.isSameOrBefore(endDate, 'day')) {
-                    // Skip weekends and past dates
-                    const now = moment().tz('America/Montevideo').startOf('day');
-                    if (currentDate.day() === 0 || currentDate.day() === 6 || currentDate.isBefore(now, 'day')) {
-                        currentDate.add(1, 'day');
-                        continue;
-                    }
-                    
-                    const dateStr = currentDate.format('YYYY-MM-DD');
-                    
-                    // Check if this spot is actually available (not reserved)
-                    const reservation = await this.db.query(`
-                        SELECT * FROM reservations 
+      } catch (dbError) {
+        if (dbError.message.includes("no such table: fixed_spot_releases")) {
+          console.log(
+            "Fixed spot releases table not ready yet, skipping reassignment",
+          );
+          await this.bot.sendMessage(
+            chatId,
+            "⚠️ Sistema de espacios fijos aún no está completamente inicializado. Intenta de nuevo en unos segundos.",
+          );
+          return;
+        }
+        throw dbError; // Re-throw other database errors
+      }
+
+      if (!releasedSpots || releasedSpots.length === 0) {
+        await this.bot.sendMessage(
+          chatId,
+          "✅ No hay espacios fijos liberados pendientes de asignar.",
+        );
+        return;
+      }
+
+      let totalReassigned = 0;
+      let issues = [];
+
+      for (const release of releasedSpots) {
+        const startDate = moment(release.start_date);
+        const endDate = moment(release.end_date);
+        const currentDate = startDate.clone();
+
+        while (currentDate.isSameOrBefore(endDate, "day")) {
+          // Skip weekends and past dates
+          const now = moment().tz("America/Montevideo").startOf("day");
+          if (
+            currentDate.day() === 0 ||
+            currentDate.day() === 6 ||
+            currentDate.isBefore(now, "day")
+          ) {
+            currentDate.add(1, "day");
+            continue;
+          }
+
+          const dateStr = currentDate.format("YYYY-MM-DD");
+
+          // Check if this spot is actually available (not reserved)
+          const reservation = await this.db.query(
+            `
+                        SELECT * FROM reservations
                         WHERE date = ? AND spot_number = ?
-                    `, [dateStr, release.spot_number]);
-                    
-                    // IMPORTANT: Only reassign if spot is NOT already reserved
-                    if (!reservation || reservation.length === 0) {
-                        // Space is free, check waitlist
-                        const waitlistUsers = await this.db.getWaitlistForDate(dateStr);
-                        
-                        if (waitlistUsers.length > 0) {
-                            const nextUser = waitlistUsers[0];
-                            
-                            try {
-                                // Check if user already has a reservation for this date
-                                const existingReservation = await this.db.getReservation(nextUser.user_id, dateStr);
-                                
-                                if (!existingReservation) {
-                                    await this.db.createReservation(
-                                        nextUser.user_id, 
-                                        nextUser, 
-                                        dateStr, 
-                                        release.spot_number
-                                    );
-                                    await this.db.removeFromWaitlist(nextUser.user_id, dateStr);
-                                    
-                                    totalReassigned++;
-                                    
-                                    // Notify the user
-                                    try {
-                                        await this.bot.sendMessage(nextUser.user_id, 
-                                            `🎉 ¡Buenas noticias! Se te ha asignado el estacionamiento ${release.spot_number} para ${currentDate.format('dddd DD/MM')}`);
-                                    } catch (error) {
-                                        console.log(`Could not notify user ${nextUser.user_id}: ${error.message}`);
-                                    }
-                                } else {
-                                    // User already has a reservation, skip to next in waitlist
-                                    await this.db.removeFromWaitlist(nextUser.user_id, dateStr);
-                                }
-                            } catch (error) {
-                                issues.push(`${currentDate.format('DD/MM')}: ${error.message}`);
-                            }
-                        }
-                    }
-                    
-                    currentDate.add(1, 'day');
+                    `,
+            [dateStr, release.spot_number],
+          );
+
+          // IMPORTANT: Only reassign if spot is NOT already reserved
+          if (!reservation || reservation.length === 0) {
+            // Space is free, check waitlist
+            const waitlistUsers = await this.db.getWaitlistForDate(dateStr);
+
+            if (waitlistUsers.length > 0) {
+              const nextUser = waitlistUsers[0];
+
+              try {
+                // Check if user already has a reservation for this date
+                const existingReservation = await this.db.getReservation(
+                  nextUser.user_id,
+                  dateStr,
+                );
+
+                if (!existingReservation) {
+                  await this.db.createReservation(
+                    nextUser.user_id,
+                    nextUser,
+                    dateStr,
+                    release.spot_number,
+                  );
+                  await this.db.removeFromWaitlist(nextUser.user_id, dateStr);
+
+                  totalReassigned++;
+
+                  // Notify the user
+                  try {
+                    await this.bot.sendMessage(
+                      nextUser.user_id,
+                      `🎉 ¡Buenas noticias! Se te ha asignado el estacionamiento ${release.spot_number} para ${currentDate.format("dddd DD/MM")}`,
+                    );
+                  } catch (error) {
+                    console.log(
+                      `Could not notify user ${nextUser.user_id}: ${error.message}`,
+                    );
+                  }
+                } else {
+                  // User already has a reservation, skip to next in waitlist
+                  await this.db.removeFromWaitlist(nextUser.user_id, dateStr);
                 }
+              } catch (error) {
+                issues.push(`${currentDate.format("DD/MM")}: ${error.message}`);
+              }
             }
-            
-            // Send summary
-            let summary = `📊 *Resumen de Reasignación:*\n\n`;
-            summary += `✅ Espacios reasignados: ${totalReassigned}\n`;
-            
-            if (issues.length > 0) {
-                summary += `\n⚠️ Problemas encontrados:\n`;
-                issues.forEach(issue => {
-                    summary += `• ${issue}\n`;
-                });
-            }
-            
-            await this.bot.sendMessage(chatId, summary, { parse_mode: 'Markdown' });
-            
-        } catch (error) {
-            console.error('Error in handleReassignFreedSpaces:', error);
-            await this.bot.sendMessage(chatId, `❌ Error durante la reasignación: ${error.message}`);
+          }
+
+          currentDate.add(1, "day");
         }
+      }
+
+      // Send summary
+      let summary = `📊 *Resumen de Reasignación:*\n\n`;
+      summary += `✅ Espacios reasignados: ${totalReassigned}\n`;
+
+      if (issues.length > 0) {
+        summary += `\n⚠️ Problemas encontrados:\n`;
+        issues.forEach((issue) => {
+          summary += `• ${issue}\n`;
+        });
+      }
+
+      await this.bot.sendMessage(chatId, summary, { parse_mode: "Markdown" });
+    } catch (error) {
+      console.error("Error in handleReassignFreedSpaces:", error);
+      await this.bot.sendMessage(
+        chatId,
+        `❌ Error durante la reasignación: ${error.message}`,
+      );
     }
-    
-    async handleAssignAvailableSpots(chatId) {
+  }
+
+  async handleAssignAvailableSpots(chatId) {
+    try {
+      await this.bot.sendMessage(
+        chatId,
+        "🔄 Iniciando asignación de espacios disponibles a lista de espera...",
+      );
+
+      const moment = require("moment-timezone");
+      const now = moment().tz("America/Montevideo");
+      const futureDate = now.clone().add(7, "days"); // Check next week
+
+      let totalAssignments = 0;
+      const assignmentResults = [];
+
+      for (
+        let currentDate = now.clone();
+        currentDate.isBefore(futureDate, "day");
+        currentDate.add(1, "day")
+      ) {
+        // Skip weekends
+        if (currentDate.day() === 0 || currentDate.day() === 6) continue;
+
+        const dateStr = currentDate.format("YYYY-MM-DD");
+        const dayName = currentDate.format("dddd DD/MM");
+
+        // Check if there are people waiting
+        const waitlistUsers = await this.db.getWaitlistForDate(dateStr);
+        if (waitlistUsers.length === 0) continue;
+
+        // Check for available spots
+        const availableSpot = await this.db.getAvailableSpot(dateStr);
+        if (!availableSpot) continue;
+
+        // Assign to first person in waitlist
+        const nextUser = waitlistUsers[0];
+        const name = nextUser.first_name || nextUser.username || "Unknown";
+
         try {
-            await this.bot.sendMessage(chatId, '🔄 Iniciando asignación de espacios disponibles a lista de espera...');
-            
-            const moment = require('moment-timezone');
-            const now = moment().tz('America/Montevideo');
-            const futureDate = now.clone().add(7, 'days'); // Check next week
-            
-            let totalAssignments = 0;
-            const assignmentResults = [];
-            
-            for (let currentDate = now.clone(); currentDate.isBefore(futureDate, 'day'); currentDate.add(1, 'day')) {
-                // Skip weekends
-                if (currentDate.day() === 0 || currentDate.day() === 6) continue;
-                
-                const dateStr = currentDate.format('YYYY-MM-DD');
-                const dayName = currentDate.format('dddd DD/MM');
-                
-                // Check if there are people waiting
-                const waitlistUsers = await this.db.getWaitlistForDate(dateStr);
-                if (waitlistUsers.length === 0) continue;
-                
-                // Check for available spots
-                const availableSpot = await this.db.getAvailableSpot(dateStr);
-                if (!availableSpot) continue;
-                
-                // Assign to first person in waitlist
-                const nextUser = waitlistUsers[0];
-                const name = nextUser.first_name || nextUser.username || 'Unknown';
-                
-                try {
-                    // Check if user already has a reservation for this date
-                    const existingReservation = await this.db.getReservation(nextUser.user_id, dateStr);
-                    
-                    if (!existingReservation) {
-                        await this.db.createReservation(nextUser.user_id, nextUser, dateStr, availableSpot.number);
-                        await this.db.removeFromWaitlist(nextUser.user_id, dateStr);
-                        
-                        assignmentResults.push({
-                            date: dayName,
-                            spot: availableSpot.number,
-                            user: name
-                        });
-                        
-                        totalAssignments++;
-                        
-                        // Send notification to user
-                        try {
-                            await this.bot.sendMessage(nextUser.user_id, 
-                                `🎉 ¡Buenas noticias! Se te ha asignado el estacionamiento ${availableSpot.number} para ${dayName}`);
-                        } catch (error) {
-                            console.log(`Could not notify user ${nextUser.user_id}: ${error.message}`);
-                        }
-                    } else {
-                        // User already has a reservation, remove from waitlist
-                        await this.db.removeFromWaitlist(nextUser.user_id, dateStr);
-                    }
-                } catch (error) {
-                    console.error(`Error assigning spot for ${dateStr}:`, error);
-                }
+          // Check if user already has a reservation for this date
+          const existingReservation = await this.db.getReservation(
+            nextUser.user_id,
+            dateStr,
+          );
+
+          if (!existingReservation) {
+            await this.db.createReservation(
+              nextUser.user_id,
+              nextUser,
+              dateStr,
+              availableSpot.number,
+            );
+            await this.db.removeFromWaitlist(nextUser.user_id, dateStr);
+
+            assignmentResults.push({
+              date: dayName,
+              spot: availableSpot.number,
+              user: name,
+            });
+
+            totalAssignments++;
+
+            // Send notification to user
+            try {
+              await this.bot.sendMessage(
+                nextUser.user_id,
+                `🎉 ¡Buenas noticias! Se te ha asignado el estacionamiento ${availableSpot.number} para ${dayName}`,
+              );
+            } catch (error) {
+              console.log(
+                `Could not notify user ${nextUser.user_id}: ${error.message}`,
+              );
             }
-            
-            // Send summary to supervisor
-            let summary = `📊 *Resumen de Asignaciones:*\n\n`;
-            summary += `✅ Asignaciones realizadas: ${totalAssignments}\n`;
-            
-            if (assignmentResults.length > 0) {
-                summary += `\n🎯 Detalles:\n`;
-                assignmentResults.forEach(result => {
-                    summary += `• ${result.date}: Espacio ${result.spot} → ${result.user}\n`;
-                });
-            } else {
-                summary += `\nℹ️ No había espacios disponibles para asignar o no hay personas en lista de espera.`;
-            }
-            
-            await this.bot.sendMessage(chatId, summary, { parse_mode: 'Markdown' });
-            
+          } else {
+            // User already has a reservation, remove from waitlist
+            await this.db.removeFromWaitlist(nextUser.user_id, dateStr);
+          }
         } catch (error) {
-            console.error('Error in handleAssignAvailableSpots:', error);
-            await this.bot.sendMessage(chatId, `❌ Error durante la asignación: ${error.message}`);
+          console.error(`Error assigning spot for ${dateStr}:`, error);
         }
+      }
+
+      // Send summary to supervisor
+      let summary = `📊 *Resumen de Asignaciones:*\n\n`;
+      summary += `✅ Asignaciones realizadas: ${totalAssignments}\n`;
+
+      if (assignmentResults.length > 0) {
+        summary += `\n🎯 Detalles:\n`;
+        assignmentResults.forEach((result) => {
+          summary += `• ${result.date}: Espacio ${result.spot} → ${result.user}\n`;
+        });
+      } else {
+        summary += `\nℹ️ No había espacios disponibles para asignar o no hay personas en lista de espera.`;
+      }
+
+      await this.bot.sendMessage(chatId, summary, { parse_mode: "Markdown" });
+    } catch (error) {
+      console.error("Error in handleAssignAvailableSpots:", error);
+      await this.bot.sendMessage(
+        chatId,
+        `❌ Error durante la asignación: ${error.message}`,
+      );
     }
+  }
 }
 
 // Start the bot
