@@ -160,7 +160,7 @@ class WTCParkBotWebhook {
     try {
       // Handle supervisor commands (use original text for commands)
       if (
-        userId.toString() === this.supervisorId &&
+        userId === this.supervisorId &&
         msg.text.trim().startsWith("/")
       ) {
         await this.handleSupervisorCommand(msg);
@@ -373,7 +373,7 @@ class WTCParkBotWebhook {
         );
       }
     } else if (text === "/reassign") {
-      if (userId.toString() !== this.supervisorId) {
+      if (userId !== this.supervisorId) {
         await this.bot.sendMessage(
           chatId,
           "❌ No tienes permisos para ejecutar este comando",
@@ -383,7 +383,7 @@ class WTCParkBotWebhook {
 
       await this.handleReassignFreedSpaces(chatId);
     } else if (text === "/assign") {
-      if (userId.toString() !== this.supervisorId) {
+      if (userId !== this.supervisorId) {
         await this.bot.sendMessage(
           chatId,
           "❌ No tienes permisos para ejecutar este comando",

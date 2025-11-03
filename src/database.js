@@ -314,9 +314,9 @@ class Database {
     async createReservation(userId, user, date, spotNumber) {
         return new Promise((resolve, reject) => {
             this.db.run(
-                `INSERT INTO reservations (user_id, username, first_name, last_name, date, spot_number) 
+                `INSERT INTO reservations (user_id, username, first_name, last_name, date, spot_number)
                  VALUES (?, ?, ?, ?, ?, ?)`,
-                [userId, user.username, user.first_name, user.last_name, date, spotNumber],
+                [String(userId), user.username, user.first_name, user.last_name, date, spotNumber],
                 function(err) {
                     if (err) reject(err);
                     else resolve(this.lastID);
@@ -329,7 +329,7 @@ class Database {
         return new Promise((resolve, reject) => {
             this.db.get(
                 'SELECT * FROM reservations WHERE user_id = ? AND date = ?',
-                [userId, date],
+                [String(userId), date],
                 (err, row) => {
                     if (err) reject(err);
                     else resolve(row);
@@ -342,7 +342,7 @@ class Database {
         return new Promise((resolve, reject) => {
             this.db.run(
                 'DELETE FROM reservations WHERE user_id = ? AND date = ?',
-                [userId, date],
+                [String(userId), date],
                 function(err) {
                     if (err) reject(err);
                     else resolve(this.changes);
@@ -373,7 +373,7 @@ class Database {
             
             this.db.all(
                 'SELECT * FROM reservations WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date',
-                [userId, startOfWeek.format('YYYY-MM-DD'), endOfWeek.format('YYYY-MM-DD')],
+                [String(userId), startOfWeek.format('YYYY-MM-DD'), endOfWeek.format('YYYY-MM-DD')],
                 (err, rows) => {
                     if (err) reject(err);
                     else resolve(rows);
@@ -386,7 +386,7 @@ class Database {
         return new Promise((resolve, reject) => {
             this.db.all(
                 'SELECT * FROM reservations WHERE user_id = ? ORDER BY date',
-                [userId],
+                [String(userId)],
                 (err, rows) => {
                     if (err) reject(err);
                     else resolve(rows);
@@ -516,24 +516,24 @@ class Database {
             // First check if user already has a reservation for this date
             this.db.get(
                 'SELECT * FROM reservations WHERE user_id = ? AND date = ?',
-                [userId, date],
+                [String(userId), date],
                 (err, reservation) => {
                     if (err) {
                         reject(err);
                         return;
                     }
-                    
+
                     // If user already has a reservation, don't add to waitlist
                     if (reservation) {
                         console.log(`User ${userId} already has reservation for ${date}, not adding to waitlist`);
                         resolve(-1); // Return -1 to indicate not added
                         return;
                     }
-                    
+
                     // Now check if already in waitlist
                     this.db.get(
                         'SELECT id FROM waitlist WHERE user_id = ? AND date = ?',
-                        [userId, date],
+                        [String(userId), date],
                         (err, existing) => {
                             if (err) {
                                 reject(err);
@@ -559,9 +559,9 @@ class Database {
                                     
                                     const position = result.next_position;
                                     this.db.run(
-                                        `INSERT INTO waitlist (user_id, username, first_name, last_name, date, position) 
+                                        `INSERT INTO waitlist (user_id, username, first_name, last_name, date, position)
                                          VALUES (?, ?, ?, ?, ?, ?)`,
-                                        [userId, user.username, user.first_name, user.last_name, date, position],
+                                        [String(userId), user.username, user.first_name, user.last_name, date, position],
                                         function(err) {
                                             if (err) reject(err);
                                             else resolve(this.lastID);
@@ -593,7 +593,7 @@ class Database {
         return new Promise((resolve, reject) => {
             this.db.get(
                 'SELECT * FROM waitlist WHERE user_id = ? AND date = ?',
-                [userId, date],
+                [String(userId), date],
                 (err, row) => {
                     if (err) reject(err);
                     else resolve(row);
@@ -609,7 +609,7 @@ class Database {
                 // Obtener la posición del usuario que se va a eliminar
                 db.get(
                     'SELECT position FROM waitlist WHERE user_id = ? AND date = ?',
-                    [userId, date],
+                    [String(userId), date],
                     (err, result) => {
                         if (err) {
                             reject(err);
@@ -626,7 +626,7 @@ class Database {
                         // Eliminar al usuario
                         db.run(
                             'DELETE FROM waitlist WHERE user_id = ? AND date = ?',
-                            [userId, date],
+                            [String(userId), date],
                             function(err) {
                                 if (err) {
                                     reject(err);
